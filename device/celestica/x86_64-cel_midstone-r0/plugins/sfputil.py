@@ -14,8 +14,9 @@ class SfpUtil(SfpUtilBase):
     """Platform-specific SfpUtil class"""
 
     PORT_START = 0
-    PORT_END = 66
-    PORTS_IN_BLOCK = 64
+    PORT_END = 65
+    QSFP_PORT_START = PORT_START
+    QSFP_PORT_END = 63
 
     EEPROM_OFFSET = 1
 
@@ -31,7 +32,7 @@ class SfpUtil(SfpUtilBase):
 
     @property
     def qsfp_ports(self):
-        return range(0, self.PORTS_IN_BLOCK)
+        return range(self.QSFP_PORT_START, self.QSFP_PORT_END+1)
 
     @property
     def port_to_eeprom_mapping(self):
@@ -40,8 +41,13 @@ class SfpUtil(SfpUtilBase):
     def __init__(self):
         eeprom_path = "/sys/class/i2c-adapter/i2c-{0}/{0}-0050/eeprom"
 
-        for x in range(0, self.port_end + 1):
-            self._port_to_eeprom_mapping[x] = eeprom_path.format(x + self.EEPROM_OFFSET)
+        if self.port_start == 1:
+            offset = self.EEPROM_OFFSET - 1
+        else:
+            offset = self.EEPROM_OFFSET
+
+        for x in range(self.port_start, self.port_end + 1):
+            self._port_to_eeprom_mapping[x] = eeprom_path.format(x + offset)
 
         SfpUtilBase.__init__(self)
 
@@ -61,8 +67,14 @@ class SfpUtil(SfpUtilBase):
         # content is a string containing the hex representation of the register
         reg_value = int(content, 16)
 
+        # Determind if port_num start from 1 or 0
+        if self.port_start == 1:
+            bit_index = port_num - 1
+        else:
+            bit_index = port_num
+
         # Mask off the bit corresponding to our port
-        mask = (1 << port_num)
+        mask = (1 << bit_index)
 
         # ModPrsL is active low
         if reg_value & mask == 0:
@@ -85,10 +97,16 @@ class SfpUtil(SfpUtilBase):
         # content is a string containing the hex representation of the register
         reg_value = int(content, 16)
 
-        # Mask off the bit corresponding to our port
-        mask = (1 << port_num)
+        # Determind if port_num start from 1 or 0
+        if self.port_start == 1:
+            bit_index = port_num - 1
+        else:
+            bit_index = port_num
 
-        # LPMode is active high
+        # Mask off the bit corresponding to our port
+        mask = (1 << bit_index)
+        
+    # LPMode is active high
         if reg_value & mask == 0:
             return False
 
@@ -110,8 +128,14 @@ class SfpUtil(SfpUtilBase):
         # content is a string containing the hex representation of the register
         reg_value = int(content, 16)
 
+        # Determind if port_num start from 1 or 0
+        if self.port_start == 1:
+            bit_index = port_num - 1
+        else:
+            bit_index = port_num
+
         # Mask off the bit corresponding to our port
-        mask = (1 << port_num)
+        mask = (1 << bit_index)
 
         # LPMode is active high; set or clear the bit accordingly
         if lpmode is True:
@@ -146,8 +170,14 @@ class SfpUtil(SfpUtilBase):
         # File content is a string containing the hex representation of the register
         reg_value = int(content, 16)
 
+        # Determind if port_num start from 1 or 0
+        if self.port_start == 1:
+            bit_index = port_num - 1
+        else:
+            bit_index = port_num
+
         # Mask off the bit corresponding to our port
-        mask = (1 << port_num)
+        mask = (1 << bit_index)
 
         # ResetL is active low
         reg_value = reg_value & ~mask
