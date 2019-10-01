@@ -1,0 +1,2 @@
+silverstone-dp/cfg/silverstone-dp-modules.conf etc/modules-load.d
+silverstone-dp/systemd/platform-modules-silverstone-dp.service lib/systemd/system

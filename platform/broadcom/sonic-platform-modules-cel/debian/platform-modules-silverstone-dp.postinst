@@ -1,0 +1,3 @@
+depmod -a
+systemctl enable platform-modules-silverstone-dp.service
+systemctl start platform-modules-silverstone-dp.service

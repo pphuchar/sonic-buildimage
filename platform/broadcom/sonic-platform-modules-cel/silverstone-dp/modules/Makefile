@@ -1,0 +1,1 @@
+obj-m := baseboard-lpc.o mc24lc64t.o cls-switchboard.o xcvr-cls.o i2c-ocores.o switch_cpld.o
