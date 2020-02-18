@@ -1,3 +1,7 @@
 questone2bd/cfg/questone2bd-modules.conf etc/modules-load.d
 questone2bd/cfg/questone2bd-modprobe.conf etc/modprobe.d
 questone2bd/systemd/platform-modules-questone2bd.service lib/systemd/system
+tools/fanctrl/fanctrl.service lib/systemd/system
+questone2bd/scripts/get_fan_speed.sh usr/local/bin
+questone2bd/scripts/set_fan_speed.sh usr/local/bin
+questone2bd/cfg/pid_config_questone2bd.ini usr/local/etc
