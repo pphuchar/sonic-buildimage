@@ -2,3 +2,6 @@ depmod -a
 
 systemctl enable platform-modules-questone2bd.service
 systemctl start platform-modules-questone2bd.service
+
+systemctl enable fanctrl.service
+systemctl start fanctrl.service
