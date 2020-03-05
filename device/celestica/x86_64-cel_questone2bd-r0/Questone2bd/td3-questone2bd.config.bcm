@@ -78,8 +78,6 @@ portmap_110.0=108:25
 portmap_115.0=113:100
 portmap_123.0=121:100
 portmap_127.0=125:100
-portmap_66.0=129:10:m
-portmap_130.0=128:10:m
 
 phy_chain_tx_lane_map_physical{1.0}=0x0123
 phy_chain_rx_lane_map_physical{1.0}=0x1032
