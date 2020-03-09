@@ -116,8 +116,8 @@
 #define FAN_WDT_TIME (0x3c) //5 * 60
 #define FAN_WDT_ENABLE_SYSFS "/sys/bus/i2c/drivers/fancpld/66-000d/wdt_en"
 #define FAN_WDT_TIME_SYSFS "/sys/bus/i2c/drivers/fancpld/66-000d/wdt_time"
-#define PSU1_SHUTDOWN_SYSFS "/sys/bus/i2c/drivers/dps1100/75-0058/control/shutdown"
-#define PSU2_SHUTDOWN_SYSFS "/sys/bus/i2c/drivers/dps1100/76-0059/control/shutdown"
+#define PSU1_SHUTDOWN_SYSFS "/sys/bus/i2c/drivers/dps1100/76-0059/control/shutdown"
+#define PSU2_SHUTDOWN_SYSFS "/sys/bus/i2c/drivers/dps1100/75-0058/control/shutdown"
 #define PSU_SPEED_CTRL_NODE "fan1_cfg"
 #define PSU_SPEED_CTRL_ENABLE 0x90
 
@@ -194,6 +194,9 @@ struct line_policy fishbone48_b2f_onefail = {
     .get_speed = calculate_line_speed,
 };
 
+/* Fan EEPROM Path: Index is matters
+ * See fantray_info[]
+ */
 const char *fan_eeprom_path[] = {
     /* FAN tray EEPROM */
     "/sys/bus/i2c/devices/2-0050/eeprom",
@@ -201,8 +204,8 @@ const char *fan_eeprom_path[] = {
     "/sys/bus/i2c/devices/6-0050/eeprom",
     "/sys/bus/i2c/devices/8-0050/eeprom",
     /* PSU EEPROM */
-    "/sys/bus/i2c/devices/75-0050/eeprom",
     "/sys/bus/i2c/devices/76-0051/eeprom",
+    "/sys/bus/i2c/devices/75-0050/eeprom",
 };
 
 static struct sensor_info_sysfs sensor_inlet_u52_critical_info = {
@@ -379,7 +382,7 @@ static struct fan_info_stu_sysfs psu1_fan_info = {
     .front_fan_prefix = "fan1_input",
     .rear_fan_prefix = "/sys/bus/i2c/drivers/dps1100/76-0059",
     .pwm_prefix = "fan1_pct",
-    .fan_led_prefix = "psu_l_led_ctrl_en",
+    .fan_led_prefix = "psu_r_led_ctrl_en",
     .fan_present_prefix = "psu_r_present",
     .fan_status_prefix = "psu_r_status",
     //.present = 1,
