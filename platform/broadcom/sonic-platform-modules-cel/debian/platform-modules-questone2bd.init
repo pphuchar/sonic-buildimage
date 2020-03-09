@@ -43,7 +43,9 @@ start)
         echo syscpld 0x0d > /sys/bus/i2c/devices/i2c-70/new_device
 
         ## Populate PSU PMBus and System CPLD devices
+        sleep 1
         echo dps1100 0x58 > /sys/bus/i2c/devices/i2c-75/new_device
+        sleep 1
         echo dps1100 0x59 > /sys/bus/i2c/devices/i2c-76/new_device
         
         # Populate temperature sensors
