@@ -2,7 +2,11 @@
 #port all en=1
 #sleep 6
 #linkscan 250000; port xe,ce linkscan=on
+linkscan off
 
+m0 load 0 0x3800 /usr/share/sonic/platform/custom_led.bin
+led start
+linkscan on
 #Load LED
 #sleep 10
 #vlan clear
@@ -10,7 +14,7 @@
 #vlan add 1 pbm=xe,cpu ubm=xe,cpu
 #sleep 5
 #led auto on; led start
-sleep 5
-port xe48,xe49,ce en=1
-port xe48,xe49 an=1
-vlan create 250 pbm=xe48,xe49 ubm=xe48,xe49
+#sleep 5
+#port xe48,xe49,ce en=1
+#port xe48,xe49 an=1
+#vlan create 250 pbm=xe48,xe49 ubm=xe48,xe49
