@@ -169,6 +169,26 @@ class Thermal(ThermalBase):
                 break
         return result
 
+    def get_high_critical_threshold(self):
+        """
+        Retrieves the high critical threshold temperature of thermal
+        Returns:
+            A float number, the high critical threshold temperature of thermal in Celsius
+            up to nearest thousandth of one degree Celsius, e.g. 30.125
+        """
+        temp_file = "temp{}_crit".format(self.ss_index)
+        return self.__get_temp(temp_file)
+
+    def get_low_critical_threshold(self):
+        """
+        Retrieves the low critical threshold temperature of thermal
+        Returns:
+            A float number, the low critical threshold temperature of thermal in Celsius
+            up to nearest thousandth of one degree Celsius, e.g. 30.125
+        """
+        temp_file = "temp{}_lcrit".format(self.ss_index)
+        return self.__get_temp(temp_file)
+
     ##############################################################
     ###################### Device methods ########################
     ##############################################################
