@@ -19,7 +19,6 @@
 #include <linux/pci.h>
 #include <linux/ratelimit.h>
 #include <linux/i2c.h>
-#include "dimm-bus.h"
 
 /*
  * The datasheet can be found here, for example:
@@ -421,8 +420,6 @@ static int imc_init_channel(struct imc_priv *priv, int i, int socket)
 		mutex_destroy(&ch->mutex);
 		return err;
 	}
-
-	i2c_scan_dimm_bus(&ch->adapter);
 
 	return 0;
 }

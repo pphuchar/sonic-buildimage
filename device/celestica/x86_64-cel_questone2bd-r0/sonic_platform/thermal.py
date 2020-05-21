@@ -41,7 +41,6 @@ class Thermal(ThermalBase):
             ('TEMP_dps1100_i2c_76_59_1',    'dps1100',  76, 0, '59', False, 1),
             ('TEMP_dps1100_i2c_76_59_2',    'dps1100',  76, 0, '59', False, 2),
             ('TEMP_syscpld_i2c_70_0d',    'syscpld',  70, 0, '0d', False, 1),
-            ('TEMP_jc42_i2c_1_18',    'jc42',  1, 0, '18', False, 1),
             ('TEMP_core_tmp_1',    'coretemp',  0, 0, '00', False, 1),
             ('TEMP_core_tmp_2',    'coretemp',  0, 0, '00', False, 2),
             ('TEMP_core_tmp_3',    'coretemp',  0, 0, '00', False, 3),
