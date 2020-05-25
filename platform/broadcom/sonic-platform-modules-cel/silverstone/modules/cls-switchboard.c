@@ -23,10 +23,10 @@
 #include <linux/i2c.h>
 #include <linux/platform_device.h>
 #include <linux/platform_data/pca954x.h>
-#include "i2c-ocores.h"
+#include <linux/platform_data/i2c-ocores.h>
 #include "xcvr-cls.h"
 
-#define MOD_VERSION "2.1.1"
+#define MOD_VERSION "2.1.2"
 #define DRV_NAME "cls-switchboard"
 
 #define I2C_MUX_CHANNEL(_ch, _adap_id, _deselect) \
@@ -467,7 +467,7 @@ static int cls_fpga_probe(struct pci_dev *dev, const struct pci_device_id *id)
 			i2c_bus_configs[i].res[0].end);
 
 		i2cbuses_pdev[i] = platform_device_register_resndata(
-					&dev->dev, "cls-ocores-i2c",
+					&dev->dev, "ocores-i2c",
 					i2c_bus_configs[i].id,
 					i2c_bus_configs[i].res,
 					i2c_bus_configs[i].num_res,
