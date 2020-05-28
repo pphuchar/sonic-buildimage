@@ -1,0 +1,4 @@
+silverstone-dp/cfg/silverstone-dp-modules.conf etc/modules-load.d
+silverstone-dp/systemd/platform-modules-silverstone-dp.service lib/systemd/system
+silverstone/modules/sonic_platform-1.0-py2-none-any.whl usr/share/sonic/device/x86_64-cel_silverstone_dp-r0
+services/platform_api/platform_api_mgnt.sh usr/local/bin
