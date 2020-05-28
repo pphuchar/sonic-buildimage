@@ -1,0 +1,4 @@
+silverstone2/scripts/sensors usr/bin
+silverstone2/scripts/platform_sensors.py usr/local/bin
+silverstone2/cfg/silverstone2-modules.conf etc/modules-load.d
+silverstone2/systemd/platform-modules-silverstone2.service lib/systemd/system
