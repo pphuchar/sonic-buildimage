@@ -109,14 +109,14 @@ struct current_xfer {
     u8 cmd[CPLD_I2C_CMD_SZ_MAX];
     u8 cmd_len;
     u8 data_len;
-    union i2c_smbus_data *data;
+    u8 rw_data[CPLD_I2C_DATA_SZ_MAX];
 };
 
 /*
  * private data of I2C adapter
  * base_addr: Base address of this I2C adapter core.
  * port_id: The port ID, use to mux an i2c core to a font panel port.
- * current_xfer: The struct carry current data setup of current smbus transfer.
+ * curr_xfer: The struct carry current data setup of current smbus transfer.
  */
 struct dx010_i2c_data {
         int base_addr;
@@ -374,21 +374,31 @@ static struct platform_device cel_dx010_lpc_dev = {
         }
 };
 
-// TODO: Refactoring this function with helper functions.
+
+/*
+ * cpld_smbus_transfer - Do the CPLD SMBus transfer.
+ * @param priv - A CPLD SMBus core private data for this transaction.
+ * Returns a negative errno code else zero on success.
+ *
+ * This core supports limited functions of SMBus protocol.
+ * The maximum data byte per transfer is limited to *CPLD_I2C_DATA_SZ_MAX*.
+ */
 static s32 cpld_smbus_transfer(struct dx010_i2c_data *priv) {
 
-        u8 val;
+        u8 val, data_len;
         s32 error;
         unsigned long ioBase;
         short portid, opcode, devaddr, cmdbyte0, ssr, writedata, readdata;
-        union i2c_smbus_data *data;
+        u8 *rw_data;
+        int i;
 
         error = -EIO;
 
         mutex_lock(&cpld_data->cpld_lock);
 
         ioBase = priv->base_addr;
-        data = priv->curr_xfer.data;
+        rw_data = priv->curr_xfer.rw_data;
+        data_len = priv->curr_xfer.data_len;
 
         portid = ioBase + I2C_PORT_ID;
         opcode = ioBase + I2C_OPCODE;
@@ -420,9 +430,9 @@ static s32 cpld_smbus_transfer(struct dx010_i2c_data *priv) {
 
                 val = inb(ssr);
                 if (val & (CPLD_I2C_BUSY | CPLD_I2C_ERR)) {
-                    pr_debug("CPLD_I2C Error, core busy after reset\n");
-                    error = -EIO;
-                    goto exit_unlock;
+                        pr_debug("CPLD_I2C Error, core busy after reset\n");
+                        error = -EIO;
+                        goto exit_unlock;
                 }
         }
 
@@ -442,16 +452,11 @@ static s32 cpld_smbus_transfer(struct dx010_i2c_data *priv) {
         pr_debug("CPLD_I2C Write CMD_Byte 0x%x\n", priv->curr_xfer.cmd[0]);
 
         /* Configure write data buffer */
-        if ((priv->curr_xfer.addr & BIT(0)) == I2C_SMBUS_WRITE){
+        if ((priv->curr_xfer.addr & BIT(0)) == I2C_SMBUS_WRITE) {
                 pr_debug("CPLD_I2C Write WR_DATA buffer\n");
-                switch(priv->curr_xfer.data_len){
-                case 1:
-                        outb(data->byte, writedata);
-                        break;
-                case 2:
-                        outb(data->block[0], writedata);
-                        outb(data->block[1], ++writedata);
-                        break;
+                for (i = 0; i < data_len; i++) {
+                        pr_debug("  WR_DATA[%d] 0x%d\n", i, rw_data[i]);
+                        outb(rw_data[i], writedata + i);
                 }
         }
 
@@ -475,16 +480,10 @@ static s32 cpld_smbus_transfer(struct dx010_i2c_data *priv) {
         }
 
         /* Get the data from buffer */
-        if ((priv->curr_xfer.addr & BIT(0)) == I2C_SMBUS_READ){
+        if ((priv->curr_xfer.addr & BIT(0)) == I2C_SMBUS_READ) {
                 pr_debug("CPLD_I2C Read RD_DATA buffer\n");
-                switch (priv->curr_xfer.data_len) {
-                case 1:
-                        data->byte = inb(readdata);
-                        break;
-                case 2:
-                        data->block[0] = inb(readdata);
-                        data->block[1] = inb(++readdata);
-                        break;
+                for (i = 0; i < data_len; i++) {
+                        rw_data[i] = inb(readdata + i);
                 }
         }
 
@@ -502,21 +501,19 @@ exit_unlock:
  * Returns a negative errno code else zero on success.
  */
 static s32 dx010_smbus_xfer(struct i2c_adapter *adap, u16 addr,
-               unsigned short flags, char read_write,
-               u8 command, int size, union i2c_smbus_data *data) {
+                            unsigned short flags, char read_write,
+                            u8 command, int size, union i2c_smbus_data *data) {
 
         int error = 0;
         struct dx010_i2c_data *priv;
 
         priv = i2c_get_adapdata(adap);
 
-        pr_debug("smbus_xfer called RW:%x CMD:%x SIZE:0x%x",
+        pr_debug("smbus_xfer called RW:%d CMD:0x%x SIZE:0x%x",
                  read_write, command, size);
 
         priv->curr_xfer.addr = (addr << 1) | read_write;
-        priv->curr_xfer.data = data;
 
-        /* Map the size to what the chip understands */
         switch (size) {
         case I2C_SMBUS_BYTE:
                 priv->curr_xfer.cmd_len = 0;
@@ -526,11 +523,23 @@ static s32 dx010_smbus_xfer(struct i2c_adapter *adap, u16 addr,
                 priv->curr_xfer.cmd_len = 1;
                 priv->curr_xfer.data_len = 1;
                 priv->curr_xfer.cmd[0] = command;
+                memcpy(&priv->curr_xfer.rw_data, data, 1);
                 break;
         case I2C_SMBUS_WORD_DATA:
                 priv->curr_xfer.cmd_len = 1;
                 priv->curr_xfer.data_len = 2;
                 priv->curr_xfer.cmd[0] = command;
+                memcpy(&priv->curr_xfer.rw_data, data, 2);
+                break;
+        case I2C_SMBUS_I2C_BLOCK_DATA:
+
+                if (data->block[0] > CPLD_I2C_DATA_SZ_MAX)
+                        data->block[0] = CPLD_I2C_DATA_SZ_MAX;
+
+                priv->curr_xfer.cmd_len = 1;
+                priv->curr_xfer.data_len = data->block[0];
+                priv->curr_xfer.cmd[0] = command;
+                memcpy(&priv->curr_xfer.rw_data, &data->block[1], data->block[0]);
                 break;
         default:
                 dev_warn(&adap->dev, "Unsupported transaction %d\n", size);
@@ -539,16 +548,33 @@ static s32 dx010_smbus_xfer(struct i2c_adapter *adap, u16 addr,
         }
 
         error = cpld_smbus_transfer(priv);
+        if (error < 0)
+                goto Done;
+
+        /* Translate the read data from CPLD core into i2c_smbus_data */
+        if (read_write == I2C_SMBUS_READ) {
+                switch (size) {
+                case I2C_SMBUS_BYTE:
+                case I2C_SMBUS_BYTE_DATA:
+                case I2C_SMBUS_WORD_DATA:
+                        memcpy(data, &priv->curr_xfer.rw_data,
+                               priv->curr_xfer.data_len);
+                        break;
+                case I2C_SMBUS_I2C_BLOCK_DATA:
+                        memcpy(&data->block[1], &priv->curr_xfer.rw_data, data->block[0]);
+                        break;
+                }
+        }
 
 Done:
         return error;
 }
 
-// TODO: Add support for I2C_FUNC_SMBUS_PROC_CALL and I2C_FUNC_SMBUS_I2C_BLOCK
-static u32 dx010_i2c_func(struct i2c_adapter *a) {
+static u32 dx010_i2c_func(struct i2c_adapter *adapter) {
         return  I2C_FUNC_SMBUS_READ_BYTE  |
                 I2C_FUNC_SMBUS_BYTE_DATA  |
-                I2C_FUNC_SMBUS_WORD_DATA;
+                I2C_FUNC_SMBUS_WORD_DATA  |
+                I2C_FUNC_SMBUS_I2C_BLOCK;
 }
 
 static const struct i2c_algorithm dx010_i2c_algorithm = {
