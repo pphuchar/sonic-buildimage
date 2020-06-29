@@ -20,6 +20,7 @@ start)
         modprobe pmbus_core
         modprobe i2c-imc allow_unsafe_access=1
         modprobe baseboard_cpld
+        modprobe i2c-ocores-polling
         modprobe switchboard_fpga allow_unsafe_i2c_access=1
         modprobe mc24lc64t
         modprobe i2c_dev_sysfs

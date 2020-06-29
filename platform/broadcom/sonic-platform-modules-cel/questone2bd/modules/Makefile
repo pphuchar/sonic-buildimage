@@ -1,2 +1,2 @@
-obj-m := mc24lc64t.o baseboard_cpld.o switchboard_fpga.o i2c-imc.o
+obj-m := mc24lc64t.o baseboard_cpld.o switchboard_fpga.o i2c-imc.o i2c-ocores-polling.o
 obj-m += i2c_dev_sysfs.o syscpld.o fancpld.o dps1100.o
