@@ -52,6 +52,9 @@ start)
         echo lm75b 0x48 > /sys/bus/i2c/devices/i2c-9/new_device
         echo lm75b 0x4d > /sys/bus/i2c/devices/i2c-67/new_device
 
+        # Populate voltage sensors reading
+        echo max11617 0x35 > /sys/bus/i2c/devices/i2c-71/new_device
+
         # Populate EEPROM
         ## FAN
         echo 24lc64t 0x50 > /sys/bus/i2c/devices/i2c-2/new_device
