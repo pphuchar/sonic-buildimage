@@ -25,7 +25,7 @@
  */
 
 #ifndef TEST_MODE
-#define MOD_VERSION "1.2.1"
+#define MOD_VERSION "1.2.2"
 #else
 #define MOD_VERSION "TEST"
 #endif
@@ -555,14 +555,14 @@ static struct attribute_group fpga_attr_grp = {
     .attrs = fpga_attrs,
 };
 
-static ssize_t cpld1_version_show(struct device *dev, 
+static ssize_t cpld1_version_show(struct device *dev,
                                   struct device_attribute *attr, char *buf)
 {
     u8 version;
     int err;
-    err = fpga_i2c_access(fpga_data->i2c_adapter[SW_I2C_CPLD_INDEX], 
-                          CPLD1_SLAVE_ADDR, 0x00, I2C_SMBUS_READ, 0x00, 
-                          I2C_SMBUS_BYTE_DATA, 
+    err = fpga_i2c_access(fpga_data->i2c_adapter[SW_I2C_CPLD_INDEX],
+                          CPLD1_SLAVE_ADDR, 0x00, I2C_SMBUS_READ, 0x00,
+                          I2C_SMBUS_BYTE_DATA,
                           (union i2c_smbus_data *)&version);
     if (err < 0)
         return err;
@@ -667,14 +667,14 @@ static struct attribute_group cpld1_attr_grp = {
     .attrs = cpld1_attrs,
 };
 
-static ssize_t cpld2_version_show(struct device *dev, 
+static ssize_t cpld2_version_show(struct device *dev,
                                   struct device_attribute *attr, char *buf)
 {
     u8 version;
     int err;
-    err = fpga_i2c_access(fpga_data->i2c_adapter[SW_I2C_CPLD_INDEX], 
-                          CPLD2_SLAVE_ADDR, 0x00, I2C_SMBUS_READ, 0x00, 
-                          I2C_SMBUS_BYTE_DATA, 
+    err = fpga_i2c_access(fpga_data->i2c_adapter[SW_I2C_CPLD_INDEX],
+                          CPLD2_SLAVE_ADDR, 0x00, I2C_SMBUS_READ, 0x00,
+                          I2C_SMBUS_BYTE_DATA,
                           (union i2c_smbus_data *)&version);
     if (err < 0)
         return err;
@@ -1036,9 +1036,9 @@ static ssize_t port_led_color_show(struct device *dev, struct device_attribute *
     if (err < 0)
         return err;
     return sprintf(buf, "%s %s\n",
-                   led_color1 == 0x07 ? "off" : led_color1 == 0x06 ? "green" : led_color1 == 0x05 ?  "red" : led_color1 == 0x04 ? 
+                   led_color1 == 0x07 ? "off" : led_color1 == 0x06 ? "green" : led_color1 == 0x05 ?  "red" : led_color1 == 0x04 ?
                     "yellow" : led_color1 == 0x03 ? "blue" : led_color1 == 0x02 ?  "cyan" : led_color1 == 0x01 ?  "magenta" : "white",
-                   led_color1 == 0x07 ? "off" : led_color1 == 0x06 ? "green" : led_color1 == 0x05 ?  "red" : led_color1 == 0x04 ? 
+                   led_color1 == 0x07 ? "off" : led_color1 == 0x06 ? "green" : led_color1 == 0x05 ?  "red" : led_color1 == 0x04 ?
                     "yellow" : led_color1 == 0x03 ? "blue" : led_color1 == 0x02 ?  "cyan" : led_color1 == 0x01 ?  "magenta" : "white");
 }
 
@@ -1503,7 +1503,7 @@ static int fpga_i2c_access(struct i2c_adapter *adapter, u16 addr,
             }
             if(retry == 0)
                 goto release_unlock;
-            // update lasted port
+            // update latest port
             fpga_i2c_lasted_access_port[master_bus - 1] = switch_addr << 8 | channel;
 
         } else {
@@ -1934,7 +1934,9 @@ static int fpga_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
     printk(KERN_INFO "");
     fpga_version = ioread32(fpga_dev.data_base_addr);
     printk(KERN_INFO "FPGA VERSION : %8.8x\n", fpga_version);
-    fpgafw_init();
+    if ((err = fpgafw_init()) < 0){
+        goto pci_release;
+    }
     platform_device_register(&silverstone_dev);
     platform_driver_register(&silverstone_drv);
     return 0;
@@ -1943,7 +1945,7 @@ pci_release:
     pci_release_regions(pdev);
 pci_disable:
     pci_disable_device(pdev);
-    return -EBUSY;
+    return err;
 }
 
 static void fpga_pci_remove(struct pci_dev *pdev)
@@ -2077,7 +2079,6 @@ static int fpgafw_init(void) {
 
 static void fpgafw_exit(void) {
     device_destroy(fpgafwclass, MKDEV(majorNumber, 0));     // remove the device
-    class_unregister(fpgafwclass);                          // unregister the device class
     class_destroy(fpgafwclass);                             // remove the device class
     unregister_chrdev(majorNumber, DEVICE_NAME);            // unregister the major number
     printk(KERN_INFO "Goodbye!\n");
