@@ -91,7 +91,11 @@ endif
 
 include rules/config
 
+ifeq ($(CONFIGURED_ARCH),amd64)
 SLAVE_BASE_IMAGE = $(SLAVE_DIR)
+else
+SLAVE_BASE_IMAGE = $(SLAVE_DIR)-$(CONFIGURED_ARCH)
+endif
 SLAVE_IMAGE = $(SLAVE_BASE_IMAGE)-$(USER)
 
 # Generate the version control build info
