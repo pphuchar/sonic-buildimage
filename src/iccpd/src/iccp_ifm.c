@@ -37,6 +37,7 @@
 #include "../include/mlacp_link_handler.h"
 #include "../include/port.h"
 #include "../include/iccp_netlink.h"
+#include "../include/iccp_netlink_utils.h"
 
 #define fwd_neigh_state_valid(state) (state & (NUD_REACHABLE | NUD_STALE | NUD_DELAY | NUD_PROBE | NUD_PERMANENT))
 
@@ -128,7 +129,7 @@ static void do_arp_learn_from_kernel(struct ndmsg *ndm, struct rtattr *tb[], int
     uint16_t vlan_id = 0;
     struct VLAN_ID vlan_key = { 0 };
 
-    char buf[MAX_BUFSIZE];
+    char buf[MAX_BUFSIZE] = { 0 };
     size_t msg_len = 0;
 
     struct LocalInterface *lif_po = NULL, *arp_lif = NULL;
@@ -144,15 +145,20 @@ static void do_arp_learn_from_kernel(struct ndmsg *ndm, struct rtattr *tb[], int
         return;
 
     /* create ARP msg*/
-    memset(buf, 0, MAX_BUFSIZE);
     msg_len = sizeof(struct ARPMsg);
     arp_msg = (struct ARPMsg *)&buf;
     arp_msg->op_type = NEIGH_SYNC_LIF;
     sprintf(arp_msg->ifname, "%s", arp_lif->name);
-    if (tb[NDA_DST])
-        memcpy(&arp_msg->ipv4_addr, RTA_DATA(tb[NDA_DST]), RTA_PAYLOAD(tb[NDA_DST]));
-    if (!is_del && tb[NDA_LLADDR])
-        memcpy(arp_msg->mac_addr, RTA_DATA(tb[NDA_LLADDR]), RTA_PAYLOAD(tb[NDA_LLADDR]));
+    if (iccp_netlink_parse_neighbor_attrs(AF_INET, is_del, tb,
+                                           &arp_msg->ipv4_addr,
+                                           sizeof(arp_msg->ipv4_addr),
+                                           arp_msg->mac_addr) != 0)
+    {
+        ICCPD_LOG_WARN(__FUNCTION__,
+                       "Invalid ARP netlink attributes for ifindex %d",
+                       ndm->ndm_ifindex);
+        return;
+    }
 
     arp_msg->ipv4_addr = arp_msg->ipv4_addr;
 
@@ -388,7 +394,7 @@ static void do_ndisc_learn_from_kernel(struct ndmsg *ndm, struct rtattr *tb[], i
     uint16_t vlan_id = 0;
     struct VLAN_ID vlan_key = { 0 };
 
-    char buf[MAX_BUFSIZE];
+    char buf[MAX_BUFSIZE] = { 0 };
     size_t msg_len = 0;
     char addr_null[16] = { 0 };
 
@@ -406,15 +412,20 @@ static void do_ndisc_learn_from_kernel(struct ndmsg *ndm, struct rtattr *tb[], i
         return;
 
     /* create NDISC msg */
-    memset(buf, 0, MAX_BUFSIZE);
     msg_len = sizeof(struct NDISCMsg);
     ndisc_msg = (struct NDISCMsg *)&buf;
     ndisc_msg->op_type = NEIGH_SYNC_LIF;
     sprintf(ndisc_msg->ifname, "%s", ndisc_lif->name);
-    if (tb[NDA_DST])
-        memcpy(&ndisc_msg->ipv6_addr, RTA_DATA(tb[NDA_DST]), RTA_PAYLOAD(tb[NDA_DST]));
-    if (!is_del && tb[NDA_LLADDR])
-        memcpy(ndisc_msg->mac_addr, RTA_DATA(tb[NDA_LLADDR]), RTA_PAYLOAD(tb[NDA_LLADDR]));
+    if (iccp_netlink_parse_neighbor_attrs(AF_INET6, is_del, tb,
+                                           ndisc_msg->ipv6_addr,
+                                           sizeof(ndisc_msg->ipv6_addr),
+                                           ndisc_msg->mac_addr) != 0)
+    {
+        ICCPD_LOG_WARN(__FUNCTION__,
+                       "Invalid NDISC netlink attributes for ifindex %d",
+                       ndm->ndm_ifindex);
+        return;
+    }
 
     ICCPD_LOG_NOTICE(__FUNCTION__, "ndisc type %s, state (%04X)(%d), ifindex [%d] (%s), ip %s, mac [%02X:%02X:%02X:%02X:%02X:%02X]",
                     msgtype == RTM_NEWNEIGH ? "New" : "Del", ndm->ndm_state, fwd_neigh_state_valid(ndm->ndm_state),
@@ -517,7 +528,7 @@ static void do_ndisc_learn_from_kernel(struct ndmsg *ndm, struct rtattr *tb[], i
                    }
                }
            }
-        } 
+        }
     }
 
     if (!(csm && lif_po)) {
@@ -664,22 +675,12 @@ int parse_rtattr(struct rtattr *tb[], int max, struct rtattr *rta, int len)
     return parse_rtattr_flags(tb, max, rta, len, 0);
 }
 
-void ifm_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta, int len)
-{
-    while (RTA_OK(rta, len))
-    {
-        if (rta->rta_type <= max)
-            tb[rta->rta_type] = rta;
-        rta = RTA_NEXT(rta, len);
-    }
-}
-
 int do_one_neigh_request(struct nlmsghdr *n)
 {
-    struct ndmsg *ndm = NLMSG_DATA(n);
+    struct ndmsg *ndm;
     int len = n->nlmsg_len;
     struct rtattr *tb[NDA_MAX + 1] = {{0}};
-    int is_del = 0;
+    int is_del;
     int msgtype = n->nlmsg_type;
     struct CSM* csm = NULL;
 
@@ -692,6 +693,15 @@ int do_one_neigh_request(struct nlmsghdr *n)
     if (n->nlmsg_type != RTM_NEWNEIGH && n->nlmsg_type  != RTM_DELNEIGH )
         return(0);
 
+    if (n->nlmsg_len < NLMSG_LENGTH(sizeof(*ndm)))
+    {
+        ICCPD_LOG_WARN(__FUNCTION__, "Truncated neighbor netlink message");
+        return MCLAG_ERROR;
+    }
+
+    ndm = NLMSG_DATA(n);
+    is_del = n->nlmsg_type == RTM_DELNEIGH;
+
     /*Check if mclag configured*/
     csm = system_get_first_csm();
     if (!csm)
@@ -701,7 +711,11 @@ int do_one_neigh_request(struct nlmsghdr *n)
     if (len < 0)
         return MCLAG_ERROR;
 
-    ifm_parse_rtattr(tb, NDA_MAX, NDA_RTA(ndm), len);
+    if (iccp_netlink_parse_rtattrs(tb, NDA_MAX, NDA_RTA(ndm), len) != 0)
+    {
+        ICCPD_LOG_WARN(__FUNCTION__, "Malformed neighbor netlink attributes");
+        return MCLAG_ERROR;
+    }
 
     if (ndm->ndm_state == NUD_INCOMPLETE
         || ndm->ndm_state == NUD_FAILED
@@ -815,7 +829,7 @@ void do_arp_update_from_reply_packet(unsigned int ifindex, unsigned int addr, ui
     uint16_t vlan_id = 0;
     struct VLAN_ID vlan_key = { 0 };
 
-    char buf[MAX_BUFSIZE];
+    char buf[MAX_BUFSIZE] = { 0 };
     size_t msg_len = 0;
 
     struct LocalInterface *lif_po = NULL, *arp_lif = NULL;
@@ -830,7 +844,6 @@ void do_arp_update_from_reply_packet(unsigned int ifindex, unsigned int addr, ui
         return;
 
     /* create ARP msg*/
-    memset(buf, 0, MAX_BUFSIZE);
     msg_len = sizeof(struct ARPMsg);
     arp_msg = (struct ARPMsg*)&buf;
     arp_msg->op_type = NEIGH_SYNC_LIF;
@@ -1033,7 +1046,7 @@ void do_ndisc_update_from_reply_packet(unsigned int ifindex, char *ipv6_addr, ui
     struct LocalInterface *peer_link_if = NULL;
     int is_link_local = 0;
 
-    char buf[MAX_BUFSIZE];
+    char buf[MAX_BUFSIZE] = { 0 };
     size_t msg_len = 0;
     char addr_null[16] = { 0 };
     uint16_t vlan_id = 0;
@@ -1053,7 +1066,6 @@ void do_ndisc_update_from_reply_packet(unsigned int ifindex, char *ipv6_addr, ui
     sprintf(mac_str, "%02x:%02x:%02x:%02x:%02x:%02x", mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
 
     /* create Ndisc msg */
-    memset(buf, 0, MAX_BUFSIZE);
     msg_len = sizeof(struct NDISCMsg);
     ndisc_msg = (struct NDISCMsg *)&buf;
     ndisc_msg->op_type = NEIGH_SYNC_LIF;
@@ -1208,7 +1220,7 @@ void do_ndisc_update_from_reply_packet(unsigned int ifindex, char *ipv6_addr, ui
             ndisc_info->op_type = ndisc_msg->op_type;
             sprintf(ndisc_info->ifname, "%s", ndisc_msg->ifname);
             memcpy(ndisc_info->mac_addr, ndisc_msg->mac_addr, ETHER_ADDR_LEN);
-             ICCPD_LOG_DEBUG(__FUNCTION__, "Update ND for %s", show_ipv6_str((char *)ndisc_msg->ipv6_addr)); 
+             ICCPD_LOG_DEBUG(__FUNCTION__, "Update ND for %s", show_ipv6_str((char *)ndisc_msg->ipv6_addr));
         }
         break;
     }
@@ -1334,7 +1346,7 @@ int add_pending_vlan_mbr(struct PendingVlanMbrIf* mbr_if, uint16_t vid)
     struct VLAN_ID *vlan = NULL;
     struct VLAN_ID vlan_key = { 0 };
     char vlan_name[16] = "";
-    if (!mbr_if) 
+    if (!mbr_if)
     {
         return MCLAG_ERROR;
     }
@@ -1344,7 +1356,7 @@ int add_pending_vlan_mbr(struct PendingVlanMbrIf* mbr_if, uint16_t vid)
     vlan_key.vid = vid;
 
     vlan = RB_FIND(vlan_rb_tree, &(mbr_if->vlan_tree), &vlan_key);
-    
+
     if (!vlan)
     {
         vlan = (struct VLAN_ID*)malloc(sizeof(struct VLAN_ID));
@@ -1368,7 +1380,7 @@ void del_pending_vlan_mbr(struct PendingVlanMbrIf* mbr_if, uint16_t vid)
 {
     struct VLAN_ID *vlan = NULL;
     struct VLAN_ID vlan_key = { 0 };
-    if (!mbr_if) 
+    if (!mbr_if)
     {
         return;
     }
@@ -1376,7 +1388,7 @@ void del_pending_vlan_mbr(struct PendingVlanMbrIf* mbr_if, uint16_t vid)
     vlan_key.vid = vid;
 
     vlan = RB_FIND(vlan_rb_tree, &(mbr_if->vlan_tree), &vlan_key);
- 
+
     if (vlan != NULL)
     {
         VLAN_RB_REMOVE(vlan_rb_tree, &(mbr_if->vlan_tree), vlan);
@@ -1402,7 +1414,7 @@ void del_all_pending_vlan_mbrs(struct PendingVlanMbrIf* lif)
     return;
 }
 
-//update vlan membership for a given interface; this function can be called 
+//update vlan membership for a given interface; this function can be called
 //whenever vlan membership is received from mclagsyncd and local interface is not found
 void update_pending_vlan_mbr(char *mbr_if_name, unsigned int vlan_id,  int add_flag)
 {
@@ -1418,10 +1430,10 @@ void update_pending_vlan_mbr(char *mbr_if_name, unsigned int vlan_id,  int add_f
 
     ICCPD_LOG_DEBUG(__FUNCTION__, "update pending vlan:%d member for if:%s event:%s \n", vlan_id, mbr_if_name, add_flag ? "add":"delete");
     mbr_if = find_pending_vlan_mbr_if(sys, mbr_if_name);
-    //if mbr_if not found create 
+    //if mbr_if not found create
     if (!mbr_if)
     {
-        if (!add_flag) 
+        if (!add_flag)
         {
             return;
         }
@@ -1436,12 +1448,12 @@ void update_pending_vlan_mbr(char *mbr_if_name, unsigned int vlan_id,  int add_f
         RB_INIT(vlan_rb_tree, &mbr_if->vlan_tree);
         LIST_INSERT_HEAD(&(sys->pending_vlan_mbr_if_list), mbr_if, if_next);
     }
-    if (add_flag) 
+    if (add_flag)
     {
         //add to pending vlan member if
         add_pending_vlan_mbr(mbr_if, vlan_id);
-    } 
-    else 
+    }
+    else
     {
         //delete from pending vlan member if
         del_pending_vlan_mbr(mbr_if, vlan_id);
@@ -1449,13 +1461,13 @@ void update_pending_vlan_mbr(char *mbr_if_name, unsigned int vlan_id,  int add_f
 }
 
 
-//move pending vlan membership from pending member interface to system lif 
+//move pending vlan membership from pending member interface to system lif
 void move_pending_vlan_mbr_to_lif(struct System *sys, struct LocalInterface* lif)
 {
     struct PendingVlanMbrIf *mbr_if;
     struct VLAN_ID* vlan = NULL;
     struct VLAN_ID* vlan_temp = NULL;
-    if (!sys || !lif) 
+    if (!sys || !lif)
     {
         return;
     }
@@ -1508,7 +1520,7 @@ void vlan_mbrship_change_handler(unsigned int vlan_id, char *mbr_if_name, int ad
     if (!lif)
     {
         ICCPD_LOG_NOTICE(__FUNCTION__, "Rx vlan:%d mbr if:%s event %s; No MCLAG If", vlan_id, mbr_if_name, add_flag ? "add":"delete");
-        update_pending_vlan_mbr(mbr_if_name, vlan_id, add_flag);  
+        update_pending_vlan_mbr(mbr_if_name, vlan_id, add_flag);
         return;
     }
     ICCPD_LOG_DEBUG(__FUNCTION__, "Rx vlan:%d mbr if:%s event %s", vlan_id, mbr_if_name, add_flag ? "add":"delete");

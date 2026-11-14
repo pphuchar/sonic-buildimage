@@ -29,6 +29,7 @@
 #include <linux/leds.h>
 #include <linux/slab.h>
 #include <linux/dmi.h>
+#include <linux/version.h>
 
 extern int as4630_54pe_cpld_read (unsigned short cpld_addr, u8 reg);
 extern int as4630_54pe_cpld_write(unsigned short cpld_addr, u8 reg, u8 value);
@@ -64,7 +65,7 @@ static struct accton_as4630_54pe_led_data  *ledctl = NULL;
 #define LED_TYPE_POE_REG_MASK	        (0x2|0x1)
 #define LED_MODE_POE_GREEN_VALUE        0x1
 #define LED_MODE_POE_AMBER_VALUE        0x2
-#define LED_MODE_POE_OFF_VALUE	        0x0
+#define LED_MODE_POE_OFF_VALUE	        0x3
 
 #define LED_TYPE_STK1_REG_MASK	        0x20
 #define LED_MODE_STK1_GREEN_VALUE       0x0
@@ -74,20 +75,20 @@ static struct accton_as4630_54pe_led_data  *ledctl = NULL;
 #define LED_MODE_STK2_GREEN_VALUE       0x0
 #define LED_MODE_STK2_OFF_VALUE	        0x10
 
-#define LED_TYPE_FAN_REG_MASK           (0x20|0x10)
-#define LED_MODE_FAN_AMBER_VALUE        0x20
-#define LED_MODE_FAN_GREEN_VALUE        0x10
-#define LED_MODE_FAN_OFF_VALUE	        (0x0)
+#define LED_TYPE_FAN_REG_MASK           (0x8|0x4)
+#define LED_MODE_FAN_AMBER_VALUE        0x8
+#define LED_MODE_FAN_GREEN_VALUE        0x4
+#define LED_MODE_FAN_OFF_VALUE	        (0xC)
 
-#define LED_TYPE_PSU2_REG_MASK          (0x8|0x4)
-#define LED_MODE_PSU2_AMBER_VALUE        0x8
-#define LED_MODE_PSU2_GREEN_VALUE        0x4
-#define LED_MODE_PSU2_OFF_VALUE	        (0x0)
+#define LED_TYPE_PSU2_REG_MASK          (0x80|0x40)
+#define LED_MODE_PSU2_AMBER_VALUE        0x80
+#define LED_MODE_PSU2_GREEN_VALUE        0x40
+#define LED_MODE_PSU2_OFF_VALUE	        (0xC0)
 
 #define LED_TYPE_PSU1_REG_MASK          (0x2|0x1)
 #define LED_MODE_PSU1_AMBER_VALUE        0x2
 #define LED_MODE_PSU1_GREEN_VALUE        0x1
-#define LED_MODE_PSU1_OFF_VALUE	        (0x0)
+#define LED_MODE_PSU1_OFF_VALUE	        (0x3)
 
 enum led_type {
     LED_TYPE_DIAG,
@@ -106,8 +107,8 @@ struct led_reg {
 };
 
 static const struct led_reg led_reg_map[] = {    
-    {(1<<LED_TYPE_DIAG)| (1<<LED_TYPE_PRI) | (1<<LED_TYPE_PSU2) , 0x30},
-    {(1<<LED_TYPE_PSU1) | (1<<LED_TYPE_FAN) | (1<<LED_TYPE_POE) |(1<<LED_TYPE_STK1) | (1<<LED_TYPE_STK2) , 0x31},
+    {(1<<LED_TYPE_DIAG)| (1<<LED_TYPE_PRI) | (1<<LED_TYPE_PSU1) , 0x30},
+    {(1<<LED_TYPE_PSU2) | (1<<LED_TYPE_FAN) | (1<<LED_TYPE_POE) |(1<<LED_TYPE_STK1) | (1<<LED_TYPE_STK2) , 0x31},
 };
 
 
@@ -371,7 +372,7 @@ static void accton_as4630_54pe_led_fan_set(struct led_classdev *led_cdev,
 static enum led_brightness accton_as4630_54pe_led_fan_get(struct led_classdev *cdev)
 {
     accton_as4630_54pe_led_update();
-    return led_reg_val_to_light_mode(LED_TYPE_FAN, ledctl->reg_val[0]);
+    return led_reg_val_to_light_mode(LED_TYPE_FAN, ledctl->reg_val[1]);
 }
 
 static void accton_as4630_54pe_led_psu1_set(struct led_classdev *led_cdev,
@@ -395,7 +396,7 @@ static void accton_as4630_54pe_led_psu2_set(struct led_classdev *led_cdev,
 static enum led_brightness accton_as4630_54pe_led_psu2_get(struct led_classdev *cdev)
 {
     accton_as4630_54pe_led_update();
-    return led_reg_val_to_light_mode(LED_TYPE_PSU2, ledctl->reg_val[0]);
+    return led_reg_val_to_light_mode(LED_TYPE_PSU2, ledctl->reg_val[1]);
 }
 
 static struct led_classdev accton_as4630_54pe_leds[] = {
@@ -405,7 +406,7 @@ static struct led_classdev accton_as4630_54pe_leds[] = {
         .brightness_set	 = accton_as4630_54pe_led_diag_set,
         .brightness_get	 = accton_as4630_54pe_led_diag_get,
         .flags			 = LED_CORE_SUSPENDRESUME,
-        .max_brightness	 = LED_MODE_GREEN,
+        .max_brightness	 = LED_MODE_GREEN_BLINK,
     },
     [LED_TYPE_PRI] = {
         .name			 = "pri",
@@ -512,7 +513,11 @@ static int accton_as4630_54pe_led_probe(struct platform_device *pdev)
     return ret;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
 static int accton_as4630_54pe_led_remove(struct platform_device *pdev)
+#else
+static void accton_as4630_54pe_led_remove(struct platform_device *pdev)
+#endif
 {
     int i;
 
@@ -520,7 +525,9 @@ static int accton_as4630_54pe_led_remove(struct platform_device *pdev)
         led_classdev_unregister(&accton_as4630_54pe_leds[i]);
     }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
     return 0;
+#endif
 }
 
 static struct platform_driver accton_as4630_54pe_led_driver = {

@@ -17,6 +17,7 @@ import json
 
 try:
     from sonic_fan.fan_base import FanBase
+    from sonic_platform_pddf_base.pddf_fan_conversion import build_fan_conversion
 except ImportError as e:
     raise ImportError(str(e) + "- required module not found")
 
@@ -33,6 +34,9 @@ class FanUtil(FanBase):
 
         pddf_obj = pddfparse.PddfParse()
         self.platform = pddf_obj.get_platform()
+        self._duty_cycle_to_pwm = build_fan_conversion(
+            plugin_data.get('FAN', {}), 'duty_cycle_to_pwm'
+        )
 
         self.num_fans = (self.platform['num_fantrays'] * self.platform['num_fans_pertray'])
 
@@ -170,8 +174,7 @@ class FanUtil(FanBase):
             print("Setting fan speed is not allowed !")
             return False
         else:
-            duty_cycle_to_pwm = eval(plugin_data['FAN']['duty_cycle_to_pwm'])
-            pwm = duty_cycle_to_pwm(val)
+            pwm = int(round(self._duty_cycle_to_pwm.convert(val)))
             print("New Speed: %d%% - PWM value to be set is %d\n" % (val, pwm))
 
             for i in range(1, num_fan+1):

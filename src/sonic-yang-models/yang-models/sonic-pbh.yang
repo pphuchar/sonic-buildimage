@@ -2,11 +2,15 @@ module sonic-pbh {
 
 	yang-version 1.1;
 
-	namespace "http://github.com/Azure/sonic-pbh";
+	namespace "http://github.com/sonic-net/sonic-pbh";
 	prefix pbh;
 
 	import ietf-inet-types {
 		prefix inet;
+	}
+
+	import sonic-types {
+		prefix stypes;
 	}
 
 	import sonic-port {
@@ -25,7 +29,7 @@ module sonic-pbh {
 
 	typedef hash-field {
 		description "Represents native hash field";
-		type enumeration {
+		type stypes:hash-field {
 			enum INNER_IP_PROTOCOL;
 			enum INNER_L4_DST_PORT;
 			enum INNER_L4_SRC_PORT;
@@ -56,7 +60,7 @@ module sonic-pbh {
 
 		container PBH_HASH_FIELD {
 
-			description "PBH_HASH_FIELD part of config_db.json";
+			description "Policy-based hash field definitions for inner packet tuple extraction";
 
 			list PBH_HASH_FIELD_LIST {
 
@@ -97,7 +101,7 @@ module sonic-pbh {
 
 		container PBH_HASH {
 
-			description "PBH_HASH part of config_db.json";
+			description "Policy-based hash definitions combining hash fields";
 
 			list PBH_HASH_LIST {
 
@@ -116,6 +120,7 @@ module sonic-pbh {
 					type leafref {
 						path "/pbh:sonic-pbh/pbh:PBH_HASH_FIELD/pbh:PBH_HASH_FIELD_LIST/pbh:hash_field_name";
 					}
+					ordered-by user;
 				}
 
 			}
@@ -125,7 +130,7 @@ module sonic-pbh {
 
 		container PBH_RULE {
 
-			description "PBH_RULE part of config_db.json";
+			description "Policy-based hashing rules matching packets and applying hash profiles";
 
 			list PBH_RULE_LIST {
 
@@ -220,7 +225,7 @@ module sonic-pbh {
 
 		container PBH_TABLE {
 
-			description "PBH_TABLE part of config_db.json";
+			description "Policy-based hashing tables binding rules to interfaces";
 
 			list PBH_TABLE_LIST {
 
@@ -244,6 +249,7 @@ module sonic-pbh {
 							path "/lag:sonic-portchannel/lag:PORTCHANNEL/lag:PORTCHANNEL_LIST/lag:name";
 						}
 					}
+					ordered-by user;
 				}
 
 				leaf description {

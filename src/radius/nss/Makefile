@@ -3,6 +3,7 @@ SHELL = /bin/bash
 .SHELLFLAGS += -e
 
 MAIN_TARGET = libnss-radius_$(NSS_RADIUS_VERSION)_$(CONFIGURED_ARCH).deb
+DERIVED_TARGETS = libnss-radius-dbgsym_$(NSS_RADIUS_VERSION)_$(CONFIGURED_ARCH).deb
 
 $(addprefix $(DEST)/, $(MAIN_TARGET)): $(DEST)/% :
 	pushd ./libnss-radius
@@ -15,7 +16,11 @@ $(addprefix $(DEST)/, $(MAIN_TARGET)): $(DEST)/% :
 
 	# Apply patch (if any)
 
+ifeq ($(CROSS_BUILD_ENVIRON), y)
+	dpkg-buildpackage -rfakeroot -b -a$(CONFIGURED_ARCH) -Pcross,nocheck -us -uc
+else
 	dpkg-buildpackage -rfakeroot -b -us -uc
+endif
 	popd
 
 	mv $(DERIVED_TARGETS) $* $(DEST)/

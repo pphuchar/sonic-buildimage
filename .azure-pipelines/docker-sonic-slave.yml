@@ -3,27 +3,28 @@
 # Add steps that build, run tests, deploy, and more:
 # https://aka.ms/yaml
 # Build and push sonic-slave-[buster|jessie|stretch] images for amd64/armhf/arm64
-
 schedules:
-- cron: "0 8 * * *"
+- cron: "0 0 * * 0"
+  displayName: Weekly build
   branches:
     include:
     - master
-    - 202012
+    - 202???
   always: true
 
-trigger: none
-pr:
+pr: none
+trigger:
+  batch: true
   branches:
     include:
     - master
+    - 202???
   paths:
     include:
-    - sonic-slave-jessie
-    - sonic-slave-stretch
-    - sonic-slave-buster
-    - sonic-slave-bullseye
-    - src/sonic-build-hooks
+    - sonic-slave-*
+    - files/build/versions
+    - Makefile
+    - Makefile.work
 
 parameters:
 - name: 'arches'
@@ -35,10 +36,11 @@ parameters:
 - name: 'dists'
   type: object
   default:
+  - trixie
+  - bookworm
   - bullseye
   - buster
   - stretch
-  - jessie
 - name: registry_url
   type: string
   default: sonicdev-microsoft.azurecr.io
@@ -54,6 +56,6 @@ stages:
       - ${{ each arch in parameters.arches }}:
         - template: docker-sonic-slave-template.yml
           parameters:
-            pool: sonicbld
+            pool: sonicso1ES-${{ arch }}
             arch: ${{ arch }}
             dist: ${{ dist }}

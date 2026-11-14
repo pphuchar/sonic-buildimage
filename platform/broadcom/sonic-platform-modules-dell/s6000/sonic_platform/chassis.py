@@ -56,6 +56,8 @@ class Chassis(ChassisBase):
     _is_fan_control_enabled = False
     _fan_control_initialised = False
 
+    _global_port_pres_dict = {}
+
     def __init__(self):
         ChassisBase.__init__(self)
         self.status_led_reg = "system_led"
@@ -71,7 +73,7 @@ class Chassis(ChassisBase):
         # low power mode.
         # We pass the eeprom path and sfp control path from chassis.py
         # So that sfp.py implementation can be generic to all platforms
-        eeprom_base = "/sys/class/i2c-adapter/i2c-{0}/{0}-0050/eeprom"
+        eeprom_base = "/sys/bus/i2c/devices/i2c-{0}/{0}-0050/eeprom"
         self.sfp_control = "/sys/devices/platform/dell-s6000-cpld.0/"
 
         for index in range(0, PORTS_IN_BLOCK):
@@ -106,6 +108,9 @@ class Chassis(ChassisBase):
         for i in range(MAX_S6000_COMPONENT):
             component = Component(i)
             self._component_list.append(component)
+
+        for port_num in range(self.PORT_START, (self.PORT_END + 1)):
+            self._global_port_pres_dict[port_num] = '0'
 
     def _get_cpld_register(self, reg_name):
         rv = 'ERR'
@@ -230,6 +235,15 @@ class Chassis(ChassisBase):
             'XX:XX:XX:XX:XX:XX'
         """
         return self._eeprom.get_base_mac()
+
+    def get_revision(self):
+        """
+        Retrieves the hardware revision of the device
+
+        Returns:
+            string: Revision value of device
+        """
+        return self._eeprom.get_revision()
 
     def get_system_eeprom_info(self):
         """

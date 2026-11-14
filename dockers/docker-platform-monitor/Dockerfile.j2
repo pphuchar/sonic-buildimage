@@ -1,9 +1,10 @@
-{% from "dockers/dockerfile-macros.j2" import install_debian_packages, install_python_wheels, copy_files %}
-FROM docker-config-engine-buster
+{% from "dockers/dockerfile-macros.j2" import install_debian_packages, install_python_wheels, copy_files, rsync_from_builder_stage %}
+ARG BASE=docker-config-engine-trixie-{{DOCKER_USERNAME}}:{{DOCKER_USERTAG}}
+
+FROM $BASE AS base
 
 ARG docker_container_name
 ARG image_version
-RUN [ -f /etc/rsyslog.conf ] && sed -ri "s/%syslogtag%/$docker_container_name#%syslogtag%/;" /etc/rsyslog.conf
 
 # Make apt-get non-interactive
 ENV DEBIAN_FRONTEND=noninteractive
@@ -12,46 +13,73 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV IMAGE_VERSION=$image_version
 
 # Install required packages
+# libyaml-cpp0.8 is required by Cisco SmartSwitch platform modules loaded by PMON.
 RUN apt-get update &&   \
     apt-get install -y  \
         build-essential \
         python3-dev     \
         ipmitool        \
-        librrd8         \
+        libyaml-cpp0.8  \
+        librrd8t64      \
         librrd-dev      \
         rrdtool         \
-        python-smbus    \
         python3-smbus   \
         dmidecode       \
         i2c-tools       \
         psmisc          \
-        python3-jsonschema \
-        libpci3
-
-# TODO: Remove these lines once we no longer need Python 2
-RUN apt-get install -f -y python-dev python-pip
-RUN pip2 install --upgrade 'pip<21'
-RUN apt-get purge -y python-pip
-RUN pip2 install 'setuptools==40.8.0'
+        python3-netifaces \
+        libpci3         \
+        iputils-ping    \
+        pciutils        \
+        nvme-cli        \
+        ethtool         \
+        xxd             \
+        python3-yaml    \
+        python3-bottle   \
+        smartmontools
+{% if sonic_asic_platform == 'mellanox' %}
+RUN apt-get install -y dbus
+{% endif %}
+{% if sonic_asic_platform == 'aspeed' %}
+# Install busybox for devmem access (needed for BMC hardware register control)
+# and the libgpiod tools (gpioset/gpioget) used to drive the switch CPU
+# power-enable line
+RUN apt-get install -y \
+        busybox        \
+        freeipmi-tools \
+        gpiod
+{% endif %}
 
 # On Arista devices, the sonic_platform wheel is not installed in the container.
 # Instead, the installation directory is mounted from the host OS. However, this method
 # doesn't ensure all dependencies are installed in the container. So here we
 # install any dependencies required by the Arista sonic_platform package.
 # TODO: eliminate the need to install these explicitly.
-# NOTE: Only install enum34 for Python 2, as our version of Python 3 is 3.7, which
-# contains 'enum' as part of the standard library. Installing enum34 there will
-# cause conflicts.
-RUN pip2 install enum34 \
-        grpcio==1.39.0 \
-        grpcio-tools==1.39.0
+# This version MUST match what is installed in the slave container
+RUN pip3 install grpcio==1.71.0 \
+        grpcio-tools==1.71.0 --no-build-isolation && \
+    find /usr/local/lib/python3*/dist-packages/grpc* -name '*.so' -exec strip --strip-unneeded {} +
 
-RUN pip3 install grpcio==1.39.0 \
-        grpcio-tools==1.39.0
+# Barefoot platform vendors' sonic_platform packages import these Python libraries (and netifaces)
+RUN pip3 install thrift
 
-# Barefoot platform vendors' sonic_platform packages import the Python 'thrift' library
-RUN pip2 install thrift==0.13.0
-RUN pip3 install thrift==0.13.0
+# Ragile platform vendors' sonic_platform packages import these Python libraries
+RUN pip3 install requests
+
+# Nexthop platform vendors' sonic_platform packages import these Python libraries
+RUN pip3 install python-dateutil==2.9.0.post0
+
+# We install the libpci module in order to be able to do PCI transactions
+RUN pip3 install libpci
+
+# Install psutil for process and system monitoring operations
+RUN pip3 install psutil
+
+# Install blkinfo for block device information gathering operations
+RUN pip3 install blkinfo
+
+# Install smbus2 for SMBus/PMBus I2C transactions
+RUN pip3 install smbus2
 
 {% if docker_platform_monitor_debs.strip() -%}
 # Copy locally-built Debian package dependencies
@@ -78,28 +106,30 @@ RUN pip3 install thrift==0.13.0
 {% endif %}
 
 
-# TODO: Remove this line once we no longer need Python 2
-RUN apt-get purge -y python-dev
-
 # Clean up
 RUN apt-get purge -y           \
         build-essential        \
-        python3-dev         && \
-    apt-get clean -y        && \
-    apt-get autoclean -y    && \
-    apt-get autoremove -y   && \
-    rm -rf /debs               \
-           /python-wheels      \
-           ~/.cache
+        python3-dev
 
 COPY ["lm-sensors.sh", "/usr/bin/"]
 COPY ["docker-pmon.supervisord.conf.j2", "docker_init.j2", "/usr/share/sonic/templates/"]
 COPY ["ssd_tools/*", "/usr/bin/"]
-COPY ["files/supervisor-proc-exit-listener", "/usr/bin"]
 COPY ["critical_processes", "/etc/supervisor"]
+COPY ["etc/rsyslog.conf", "/etc/rsyslog.conf"]
 
+RUN mkdir -p /usr/share/stormond
 RUN sonic-cfggen -a "{\"CONFIGURED_PLATFORM\":\"{{CONFIGURED_PLATFORM}}\"}" -t /usr/share/sonic/templates/docker_init.j2 > /usr/bin/docker_init.sh
 RUN rm -f /usr/share/sonic/templates/docker_init.j2
 RUN chmod 755 /usr/bin/docker_init.sh
 
+FROM $BASE
+
+ARG image_version
+
+{{ rsync_from_builder_stage() }}
+
+# Pass the image_version to container
+ENV IMAGE_VERSION=$image_version
+
+ENV DEBIAN_FRONTEND=noninteractive
 ENTRYPOINT ["/usr/bin/docker_init.sh"]

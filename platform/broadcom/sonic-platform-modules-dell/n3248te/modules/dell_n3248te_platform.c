@@ -209,9 +209,8 @@
 
         for (i = 0; i < pdata->no_of_buses; i++) {
             int nr = pdata->base_nr + i;
-            unsigned int class = 0;
 
-            ret = i2c_mux_add_adapter(muxc, nr, i, class);
+            ret = i2c_mux_add_adapter(muxc, nr, i);
             if (ret) {
                 dev_err(&pdev->dev, "Failed to add adapter %d\n", i);
                 goto add_adapter_failed;
@@ -228,15 +227,13 @@
         return ret;
     }
 
-    static int mux_remove(struct platform_device *pdev)
+    static void mux_remove(struct platform_device *pdev)
     {
         struct i2c_mux_core *muxc = platform_get_drvdata(pdev);
 
         i2c_mux_del_adapters(muxc);
 
         i2c_put_adapter(muxc->parent);
-
-        return 0;
     }
 
     static struct platform_driver mux_driver = {
@@ -572,7 +569,7 @@ static ssize_t system_led_show(struct device *dev, struct device_attribute *deva
     if (ret < 0)
         return sprintf(buf, "read error");
 
-    data = (u8)(ret & 0x30) >> 5;
+    data = (u8)(ret & 0x30) >> 4;
 
     switch (data)
     {
@@ -878,6 +875,42 @@ static ssize_t fan_led_store(struct device *dev, struct device_attribute *devatt
     return count;
 }
 
+static ssize_t watchdog_show(struct device *dev,
+                                   struct device_attribute *devattr, char *buf)
+{
+    s32 ret;
+    u8 data = 0;
+    struct cpld_platform_data *pdata = dev->platform_data;
+
+    ret = i2c_smbus_read_byte_data(pdata[cpu_cpld].client, 0x7);
+    if (ret < 0)
+        return sprintf(buf, "read error");
+    data = ret;
+
+    return sprintf(buf, "%x\n", data);
+}
+
+static ssize_t watchdog_store(struct device *dev, struct device_attribute *devattr, const char *buf, size_t count)
+{
+    s32 ret, err;
+    unsigned long val;
+    u8 data = 0;
+    struct cpld_platform_data *pdata = dev->platform_data;
+
+    err = kstrtoul(buf, 10, &val);
+    if (err)
+        return err;
+
+    data = (u8) val;
+    if (data)
+    {
+        ret = i2c_smbus_write_byte_data(pdata[cpu_cpld].client, 0x7, data);
+        if (ret < 0)
+            return ret;
+    }
+
+    return count;
+}
 
 static ssize_t power_good_show(struct device *dev,
                                    struct device_attribute *devattr, char *buf)
@@ -974,6 +1007,7 @@ static DEVICE_ATTR_RO(psu1_prs);
 static DEVICE_ATTR_RO(psu0_status);
 static DEVICE_ATTR_RO(psu1_status);
 static DEVICE_ATTR_RW(system_led);
+static DEVICE_ATTR_RW(watchdog);
 static DEVICE_ATTR_RW(locator_led);
 static DEVICE_ATTR_RW(power_led);
 static DEVICE_ATTR_RW(master_led);
@@ -1017,6 +1051,7 @@ static struct attribute *n3248te_cpld_attrs[] = {
     &dev_attr_psu0_status.attr,
     &dev_attr_psu1_status.attr,
     &dev_attr_system_led.attr,
+    &dev_attr_watchdog.attr,
     &dev_attr_locator_led.attr,
     &dev_attr_power_led.attr,
     &dev_attr_master_led.attr,
@@ -1107,7 +1142,7 @@ error:
     return -ENODEV;
 }
 
-static int __exit cpld_remove(struct platform_device *pdev)
+static void __exit cpld_remove(struct platform_device *pdev)
 {
     int i;
     struct i2c_adapter *parent = NULL;
@@ -1129,8 +1164,6 @@ static int __exit cpld_remove(struct platform_device *pdev)
     }
 
     i2c_put_adapter(parent);
-
-    return 0;
 }
 
 static struct platform_driver cpld_driver = {

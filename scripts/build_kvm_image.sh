@@ -1,14 +1,19 @@
-#!/bin/bash -ex
+#!/bin/bash -e
+
+login_password=$PASSWD
+unset PASSWD
+set -x
 
 #  Copyright (C) 2014 Curt Brune <curt@cumulusnetworks.com>
 #
 #  SPDX-License-Identifier:     GPL-2.0
 
-MEM=4096
+MEM=16384
 DISK=$1
 ONIE_RECOVERY_ISO=$2
 INSTALLER=$3
 DISK_SIZE=$4
+BOOT_FIRMWARE=$5
 
 INSTALLER_DISK="./sonic-installer.img"
 
@@ -36,9 +41,9 @@ create_disk()
 
 prepare_installer_disk()
 {
-    fallocate -l 2048M $INSTALLER_DISK
+    fallocate -l 6144M $INSTALLER_DISK
 
-    mkfs.vfat $INSTALLER_DISK
+    mkfs.ext2 $INSTALLER_DISK
 
     tmpdir=$(mktemp -d)
 
@@ -47,6 +52,19 @@ prepare_installer_disk()
     cp $INSTALLER $tmpdir/onie-installer.bin
 
     umount $tmpdir
+}
+
+wait_kvm_ready()
+{
+    local count=30
+    local waiting_in_seconds=2.0
+    for ((i=1; i<=$count; i++)); do
+        sleep $waiting_in_seconds
+        echo "$(date) [$i/$count] waiting for the port $KVM_PORT ready"
+        if netstat -l | grep -q ":$KVM_PORT"; then
+          break
+        fi
+    done
 }
 
 apt-get install -y net-tools
@@ -61,7 +79,7 @@ if [[ "$vs_build_prepare_mem" == "yes" ]]; then
     bash -c 'echo 1 > /proc/sys/vm/drop_caches'
     # Not all kernels support compact_memory
     if [[ -w '/proc/sys/vm/compact_memory' ]]
-    then	    
+    then
         bash -c 'echo 1 > /proc/sys/vm/compact_memory'
     fi
     free -m
@@ -73,20 +91,28 @@ trap on_error ERR
 
 echo "Installing SONiC"
 
+
+if [[ "$BOOT_FIRMWARE" == "UEFI" ]]; then
+    efi_vars=${DISK%.img}_vars.fd
+    cp /usr/share/OVMF/OVMF_VARS_4M.fd $efi_vars
+    uefi_options="-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd -drive if=pflash,format=raw,file=$efi_vars"
+fi
+
 /usr/bin/kvm -m $MEM \
+    -machine "q35,smm=on" \
     -name "onie" \
     -boot "order=cd,once=d" -cdrom "$ONIE_RECOVERY_ISO" \
-    -device e1000,netdev=onienet \
-    -netdev user,id=onienet,hostfwd=:0.0.0.0:3041-:22 \
-    -vnc 0.0.0.0:0 \
-    -vga std \
+    ${uefi_options} \
+    -device virtio-net,netdev=onienet \
+    -netdev user,id=onienet \
+    -nographic \
     -drive file=$DISK,media=disk,if=virtio,index=0 \
     -drive file=$INSTALLER_DISK,if=virtio,index=1 \
     -serial telnet:127.0.0.1:$KVM_PORT,server > $kvm_log 2>&1 &
 
 kvm_pid=$!
 
-sleep 2.0
+wait_kvm_ready
 
 [ -d "/proc/$kvm_pid" ] || {
         echo "ERROR: kvm died."
@@ -103,18 +129,19 @@ kill $kvm_pid
 echo "Booting up SONiC"
 
 /usr/bin/kvm -m $MEM \
+    -machine "q35,smm=on" \
     -name "onie" \
-    -device e1000,netdev=onienet \
+    ${uefi_options} \
+    -device virtio-net,netdev=onienet \
     -netdev user,id=onienet,hostfwd=:0.0.0.0:3041-:22 \
-    -vnc 0.0.0.0:0 \
-    -vga std \
+    -nographic \
     -snapshot \
     -drive file=$DISK,media=disk,if=virtio,index=0 \
     -serial telnet:127.0.0.1:$KVM_PORT,server > $kvm_log 2>&1 &
 
 kvm_pid=$!
 
-sleep 2.0
+wait_kvm_ready
 
 [ -d "/proc/$kvm_pid" ] || {
         echo "ERROR: kvm died."
@@ -124,7 +151,10 @@ sleep 2.0
 
 echo "to kill kvm:  sudo kill $kvm_pid"
 
-./check_install.py -u $SONIC_USERNAME -P $PASSWD -p $KVM_PORT
+set +x
+SONIC_PASSWORD="$login_password" ./check_install.py -u "$SONIC_USERNAME" -p "$KVM_PORT"
+unset login_password
+set -x
 
 kill $kvm_pid
 

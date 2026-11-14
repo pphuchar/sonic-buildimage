@@ -10,12 +10,35 @@ try:
     from sonic_platform_base.chassis_base import ChassisBase
     from sonic_platform.sfp import Sfp
     from sonic_platform.psu import Psu
-    from sonic_platform.fan import Fan
+    from sonic_platform.fan_drawer import FanDrawer
     from sonic_platform.thermal import Thermal
     from sonic_platform.eeprom import Eeprom
 except ImportError as e:
     raise ImportError(str(e) + "- required module not found")
 
+voltage_sensor_present = True
+try:
+    from sonic_platform.voltage_sensor import VoltageSensor
+except ImportError as e:
+    voltage_sensor_present = False
+
+current_sensor_present = True
+try:
+    from sonic_platform.current_sensor import CurrentSensor
+except ImportError as e:
+    current_sensor_present = False
+
+asicthermal_present = True
+try:
+    from sonic_platform.asic_thermal import AsicThermal
+except ImportError as e:
+    asicthermal_present = False
+
+component_present = True
+try:
+    from sonic_platform.component import Component
+except ImportError as e:
+    component_present = False
 
 class PddfChassis(ChassisBase):
     """
@@ -32,9 +55,9 @@ class PddfChassis(ChassisBase):
         self.plugin_data = pddf_plugin_data if pddf_plugin_data else None
         if not self.pddf_obj or not self.plugin_data:
             try:
-                from . import pddfparse
+                from . import pddfapi
                 import json
-                self.pddf_obj = pddfparse.PddfParse()
+                self.pddf_obj = pddfapi.PddfApi()
                 with open('/usr/share/sonic/platform/pddf/pd-plugin.json') as pd:
                     self.plugin_data = json.load(pd)
             except Exception as e:
@@ -43,51 +66,58 @@ class PddfChassis(ChassisBase):
         self.platform_inventory = self.pddf_obj.get_platform()
 
         # Initialize EEPROM
-        self.sys_eeprom = Eeprom(self.pddf_obj, self.plugin_data)
+        try:
+            self._eeprom = Eeprom(self.pddf_obj, self.plugin_data)
+        except Exception as err:
+            sys.stderr.write("Unable to initialize syseeprom - {}".format(repr(err)))
+            # Dont exit as we dont want failure in loading other components
+
 
         # FANs
-        for i in range(self.platform_inventory['num_fantrays']):
-            for j in range(self.platform_inventory['num_fans_pertray']):
-                fan = Fan(i, j, self.pddf_obj, self.plugin_data)
-                self._fan_list.append(fan)
+        for i in range(self.platform_inventory.get('num_fantrays', 0)):
+            fandrawer = FanDrawer(i, self.pddf_obj, self.plugin_data)
+            self._fan_drawer_list.append(fandrawer)
+            self._fan_list.extend(fandrawer._fan_list)
 
         # PSUs
-        for i in range(self.platform_inventory['num_psus']):
+        for i in range(self.platform_inventory.get('num_psus', 0)):
             psu = Psu(i, self.pddf_obj, self.plugin_data)
             self._psu_list.append(psu)
 
         # OPTICs
-        for index in range(self.platform_inventory['num_ports']):
+        for index in range(self.platform_inventory.get('num_ports', 0)):
             sfp = Sfp(index, self.pddf_obj, self.plugin_data)
             self._sfp_list.append(sfp)
 
         # THERMALs
-        for i in range(self.platform_inventory['num_temps']):
+        for i in range(self.platform_inventory.get('num_temps', 0)):
             thermal = Thermal(i, self.pddf_obj, self.plugin_data)
             self._thermal_list.append(thermal)
 
-        # SYSTEM LED Test Cases
-        """
-	#comment out test cases
-	sys_led_list= { "LOC":0,
-			"DIAG":0, 
-			"FAN":0,
-			"SYS":0, 
-			"PSU1":0,
-			"PSU2":1
-		      }  
+        if voltage_sensor_present:
+            # VOLTAGE SENSORs
+            for i in range(self.platform_inventory.get('num_voltage_sensors', 0)):
+                voltage = VoltageSensor(i, self.pddf_obj, self.plugin_data)
+                self._voltage_sensor_list.append(voltage)
 
-	for led in sys_led_list:
-		color=self.get_system_led(led, sys_led_list[led])
-		print color
+        if current_sensor_present:
+            # CURRENT SENSORs
+            for i in range(self.platform_inventory.get('num_current_sensors', 0)):
+                current = CurrentSensor(i, self.pddf_obj, self.plugin_data)
+                self._current_sensor_list.append(current)
 
-	self.set_system_led("LOC_LED","STATUS_LED_COLOR_GREEN")
-	color=self.get_system_led("LOC_LED")
-	print "Set Green: " + color
-	self.set_system_led("LOC_LED", "STATUS_LED_COLOR_OFF")
-	color=self.get_system_led("LOC_LED")
-	print "Set off: " + color
-	"""
+        if asicthermal_present:
+            # ASIC Thermal
+            position_offset = len(self._thermal_list)
+            for i in range(self.platform_inventory.get('num_asic_temps', 0)):
+                asicthermal = AsicThermal(i, position_offset, self.pddf_obj)
+                self._thermal_list.append(asicthermal)
+
+        if component_present:
+            # Components (Programmables)
+            for i in range(self.platform_inventory.get('num_components', 0)):
+                component = Component(i, self.pddf_obj, self.plugin_data)
+                self._component_list.append(component)
 
     def get_name(self):
         """
@@ -95,7 +125,7 @@ class PddfChassis(ChassisBase):
         Returns:
             string: The name of the chassis
         """
-        return self.sys_eeprom.modelstr()
+        return self._eeprom.modelstr()
 
     def get_presence(self):
         """
@@ -111,15 +141,15 @@ class PddfChassis(ChassisBase):
         Returns:
             string: Model/part number of chassis
         """
-        return self.sys_eeprom.part_number_str()
+        return self._eeprom.part_number_str()
 
-    def get_serial(self):
+    def get_service_tag(self):
         """
-        Retrieves the serial number of the chassis (Service tag)
+        Retrieves the service tag of the chassis
         Returns:
-            string: Serial number of chassis
+            string: Sevice tag of chassis
         """
-        return self.sys_eeprom.serial_str()
+        return self._eeprom.serial_str()
 
     def get_status(self):
         """
@@ -138,9 +168,19 @@ class PddfChassis(ChassisBase):
             A string containing the MAC address in the format
             'XX:XX:XX:XX:XX:XX'
         """
-        return self.sys_eeprom.base_mac_addr()
+        return self._eeprom.base_mac_addr()
 
-    def get_serial_number(self):
+    def get_revision(self):
+        """
+        Retrieves the hardware revision for the chassis
+
+        Returns:
+            A string containing the hardware revision for this
+            chassis.
+        """
+        return self._eeprom.revision_str()
+
+    def get_serial(self):
         """
         Retrieves the hardware serial number for the chassis
 
@@ -148,7 +188,7 @@ class PddfChassis(ChassisBase):
             A string containing the hardware serial number for this
             chassis.
         """
-        return self.sys_eeprom.serial_number_str()
+        return self._eeprom.serial_number_str()
 
     def get_system_eeprom_info(self):
         """
@@ -158,7 +198,7 @@ class PddfChassis(ChassisBase):
             OCP ONIE TlvInfo EEPROM format and values are their corresponding
             values.
         """
-        return self.sys_eeprom.system_eeprom_info()
+        return self._eeprom.system_eeprom_info()
 
     def get_reboot_cause(self):
         """
@@ -173,298 +213,71 @@ class PddfChassis(ChassisBase):
         """
         raise NotImplementedError
 
-    def get_component_name_list(self):
-        """
-        Retrieves a list of the names of components available on the chassis (e.g., BIOS, CPLD, FPGA, etc.)
-
-        Returns:
-            A list containing the names of components available on the chassis
-        """
-        return self._component_name_list
-
-    def get_firmware_version(self, component_name):
-        """
-        Retrieves platform-specific hardware/firmware versions for chassis
-        componenets such as BIOS, CPLD, FPGA, etc.
-        Args:
-            component_name: A string, the component name.
-
-        Returns:
-            A string containing platform-specific component versions
-        """
-        raise NotImplementedError
-
-    def install_component_firmware(self, component_name, image_path):
-        """
-        Install firmware to component
-        Args:
-            component_name: A string, the component name.
-            image_path: A string, path to firmware image.
-
-        Returns:
-            A boolean, True if install was successful, False if not
-        """
-        raise NotImplementedError
+    ##############################################
+    # Component methods
+    ##############################################
 
     ##############################################
     # Module methods
     ##############################################
+    # All module methods are part of chassis_base.py
+    # if they need to be overwritten, define them here
 
-    def get_num_modules(self):
-        """
-        Retrieves the number of modules available on this chassis
-
-        Returns:
-            An integer, the number of modules available on this chassis
-        """
-        return len(self._module_list)
-
-    def get_all_modules(self):
-        """
-        Retrieves all modules available on this chassis
-
-        Returns:
-            A list of objects derived from ModuleBase representing all
-            modules available on this chassis
-        """
-        return self._module_list
-
-    def get_module(self, index):
-        """
-        Retrieves module represented by (0-based) index <index>
-
-        Args:
-            index: An integer, the index (0-based) of the module to
-            retrieve
-
-        Returns:
-            An object dervied from ModuleBase representing the specified
-            module
-        """
-        module = None
-
-        try:
-            module = self._module_list[index]
-        except IndexError:
-            sys.stderr.write("Module index {} out of range (0-{})\n".format(
-                             index, len(self._module_list)-1))
-
-        return module
     ##############################################
     # Fan methods
     ##############################################
-
-    def get_num_fans(self):
-        """
-        Retrieves the number of fans available on this chassis
-
-        Returns:
-            An integer, the number of fan modules available on this chassis
-        """
-        return len(self._fan_list)
-
-    def get_all_fans(self):
-        """
-        Retrieves all fan modules available on this chassis
-
-        Returns:
-            A list of objects derived from FanBase representing all fan
-            modules available on this chassis
-        """
-        return self._fan_list
-
-    def get_fan(self, index):
-        """
-        Retrieves fan module represented by (0-based) index <index>
-
-        Args:
-            index: An integer, the index (0-based) of the fan module to
-            retrieve
-
-        Returns:
-            An object dervied from FanBase representing the specified fan
-            module
-        """
-        fan = None
-
-        try:
-            fan = self._fan_list[index]
-        except IndexError:
-            sys.stderr.write("Fan index {} out of range (0-{})\n".format(
-                             index, len(self._fan_list)-1))
-
-        return fan
+    # All fan methods are part of chassis_base.py
+    # if they need to be overwritten, define them here
 
     ##############################################
     # PSU methods
     ##############################################
-
-    def get_num_psus(self):
-        """
-        Retrieves the number of power supply units available on this chassis
-
-        Returns:
-            An integer, the number of power supply units available on this
-            chassis
-        """
-        return len(self._psu_list)
-
-    def get_all_psus(self):
-        """
-        Retrieves all power supply units available on this chassis
-
-        Returns:
-            A list of objects derived from PsuBase representing all power
-            supply units available on this chassis
-        """
-        return self._psu_list
-
-    def get_psu(self, index):
-        """
-        Retrieves power supply unit represented by (0-based) index <index>
-
-        Args:
-            index: An integer, the index (0-based) of the power supply unit to
-            retrieve
-
-        Returns:
-            An object dervied from PsuBase representing the specified power
-            supply unit
-        """
-        psu = None
-
-        try:
-            psu = self._psu_list[index]
-        except IndexError:
-            sys.stderr.write("PSU index {} out of range (0-{})\n".format(
-                             index, len(self._psu_list)-1))
-
-        return psu
+    # All psu methods are part of chassis_base.py
+    # if they need to be overwritten, define them here
 
     ##############################################
     # THERMAL methods
     ##############################################
-
-    def get_num_thermals(self):
-        """
-        Retrieves the number of thermals available on this chassis
-
-        Returns:
-            An integer, the number of thermals available on this chassis
-        """
-        return len(self._thermal_list)
-
-    def get_all_thermals(self):
-        """
-        Retrieves all thermals available on this chassis
-
-        Returns:
-            A list of objects derived from ThermalBase representing all thermals
-            available on this chassis
-        """
-        return self._thermal_list
-
-    def get_thermal(self, index):
-        """
-        Retrieves thermal unit represented by (0-based) index <index>
-
-        Args:
-            index: An integer, the index (0-based) of the thermal to
-            retrieve
-
-        Returns:
-            An object dervied from ThermalBase representing the specified thermal
-        """
-        thermal = None
-
-        try:
-            thermal = self._thermal_list[index]
-        except IndexError:
-            sys.stderr.write("THERMAL index {} out of range (0-{})\n".format(
-                             index, len(self._thermal_list)-1))
-
-        return thermal
+    # All thermal methods are part of chassis_base.py
+    # if they need to be overwritten, define them here
 
     ##############################################
     # SFP methods
     ##############################################
-
-    def get_num_sfps(self):
-        """
-        Retrieves the number of sfps available on this chassis
-
-        Returns:
-            An integer, the number of sfps available on this chassis
-        """
-        return len(self._sfp_list)
-
-    def get_all_sfps(self):
-        """
-        Retrieves all sfps available on this chassis
-
-        Returns:
-            A list of objects derived from SfpBase representing all sfps
-            available on this chassis
-        """
-        return self._sfp_list
-
-    def get_sfp(self, index):
-        """
-        Retrieves sfp represented by (0-based) index <index>
-
-        Args:
-            index: An integer, the index (0-based) of the sfp to retrieve.
-                   The index should be the sequence of a physical port in a chassis,
-                   starting from 0.
-                   For example, 0 for Ethernet0, 1 for Ethernet4 and so on.
-
-        Returns:
-            An object dervied from SfpBase representing the specified sfp
-        """
-        sfp = None
-
-        try:
-            sfp = self._sfp_list[index]
-        except IndexError:
-            sys.stderr.write("SFP index {} out of range (0-{})\n".format(
-                             index, len(self._sfp_list)-1))
-
-        return sfp
+    # All sfp methods are part of chassis_base.py
+    # if they need to be overwritten, define them here
 
     ##############################################
     # System LED  methods
     ##############################################
+    # APIs used by PDDF. Use them for debugging front panel
+    # system LED and fantray LED issues
     def set_system_led(self, led_device_name, color):
-        result, msg = self.pddf_obj.is_supported_sysled_state(led_device_name, color)
-        if result == False:
+        """
+        Sets the color of an LED device in PDDF
+        Args:
+           led_device_name: a pre-defined LED device name list used in pddf-device.json.
+           color: A string representing the color with which to set a LED
+        Returns:
+           bool: True if the LED state is set successfully, False if not
+        """
+        result, msg = self.pddf_obj.set_system_led_color(led_device_name, color)
+        if not result and msg:
             print(msg)
-            return (False)
-
-        index = self.pddf_obj.data[led_device_name]['dev_attr']['index']
-        device_name = self.pddf_obj.data[led_device_name]['dev_info']['device_name']
-        self.pddf_obj.create_attr('device_name', device_name,  self.pddf_obj.get_led_path())
-        self.pddf_obj.create_attr('index', index, self.pddf_obj.get_led_path())
-        self.pddf_obj.create_attr('color', color, self.pddf_obj.get_led_cur_state_path())
-        self.pddf_obj.create_attr('dev_ops', 'set_status',  self.pddf_obj.get_led_path())
-        return (True)
+        return (result)
 
     def get_system_led(self, led_device_name):
-        if led_device_name not in self.pddf_obj.data.keys():
-            status = "[FAILED] " + led_device_name + " is not configured"
-            return (status)
-
-        index = self.pddf_obj.data[led_device_name]['dev_attr']['index']
-        device_name = self.pddf_obj.data[led_device_name]['dev_info']['device_name']
-        self.pddf_obj.create_attr('device_name', device_name,  self.pddf_obj.get_led_path())
-        self.pddf_obj.create_attr('index', index, self.pddf_obj.get_led_path())
-        self.pddf_obj.create_attr('dev_ops', 'get_status',  self.pddf_obj.get_led_path())
-        color = self.pddf_obj.get_led_color()
-        return (color)
+        """
+        Gets the color of an LED device in PDDF
+        Returns:
+            string: color of LED or message if failed.
+        """
+        result, output = self.pddf_obj.get_system_led_color(led_device_name)
+        return (output)
 
     ##############################################
     # Other methods
     ##############################################
-
     def get_watchdog(self):
         """
         Retreives hardware watchdog device on this chassis
@@ -473,38 +286,13 @@ class PddfChassis(ChassisBase):
             An object derived from WatchdogBase representing the hardware
             watchdog device
         """
+        try:
+            if self._watchdog is None:
+                from sonic_platform.watchdog import Watchdog
+                # Create the watchdog Instance
+                self._watchdog = Watchdog()
+
+        except Exception as e:
+            syslog.syslog(syslog.LOG_WARNING, "{}".format(e))
         return self._watchdog
 
-    def get_eeprom(self):
-        """
-        Retreives eeprom device on this chassis
-
-        Returns:
-            An object derived from WatchdogBase representing the hardware
-            eeprom device
-        """
-        return self.sys_eeprom
-
-    def get_change_event(self, timeout=0):
-        """
-        Returns a nested dictionary containing all devices which have
-        experienced a change at chassis level
-
-        Args:
-            timeout: Timeout in milliseconds (optional). If timeout == 0,
-                this method will block until a change is detected.
-        Returns:
-            (bool, dict):
-                - True if call successful, False if not;
-                - A nested dictionary where key is a device type,
-                  value is a dictionary with key:value pairs in the format of
-                  {'device_id':'device_event'},
-                  where device_id is the device ID for this device and
-                        device_event,
-                             status='1' represents device inserted,
-                             status='0' represents device removed.
-                  Ex. {'fan':{'0':'0', '2':'1'}, 'sfp':{'11':'0'}}
-                      indicates that fan 0 has been removed, fan 2
-                      has been inserted and sfp 11 has been removed.
-        """
-        raise NotImplementedError

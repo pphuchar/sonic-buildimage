@@ -5,6 +5,24 @@ import struct
 import mmap
 import subprocess
 
+# Read FPGA sysfs 
+
+def _readSysFile(path):
+    try:
+        with open(path, 'r') as source:
+            return source.read().strip() 
+    except IOError:
+        return None
+
+def get_fpga_buspath():
+    for bus in (1,2):
+        f='/sys/bus/pci/devices/0000:0{0}:00.0/subsystem_vendor'.format(bus)
+        if os.path.exists(f):
+            fpga_buspath = f
+        if _readSysFile(fpga_buspath) == '0x1172':
+            fpga_buspath = '/sys/bus/pci/devices/0000:0{0}:00.0/resource0'.format(bus)
+            return fpga_buspath
+
 # Read PCI device
 
 def pci_mem_read(mm, offset):
@@ -39,7 +57,10 @@ def pci_set_value(resource, val, offset):
 # Read I2C device
 
 def i2c_get(bus, i2caddr, ofs):
-    return int(subprocess.check_output(['/usr/sbin/i2cget', '-y', str(bus), str(i2caddr), str(ofs)]), 16)
+    try:
+        return int(subprocess.check_output(['/usr/sbin/i2cget', '-y', str(bus), str(i2caddr), str(ofs)]), 16)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return -1
 
 def io_reg_read(io_resource, offset):
     fd = os.open(io_resource, os.O_RDONLY)

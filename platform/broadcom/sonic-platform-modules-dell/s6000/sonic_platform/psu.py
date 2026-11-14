@@ -26,7 +26,7 @@ class Psu(PsuBase):
     """DellEMC Platform-specific PSU class"""
 
     CPLD_DIR = "/sys/devices/platform/dell-s6000-cpld.0/"
-    I2C_DIR = "/sys/class/i2c-adapter/"
+    I2C_DIR = "/sys/bus/i2c/devices/"
 
     def __init__(self, psu_index):
         PsuBase.__init__(self)
@@ -161,6 +161,15 @@ class Psu(PsuBase):
         # Sample Serial number format "US-01234D-54321-25A-0123-A00"
         return self.eeprom.get_serial_number()
 
+    def get_revision(self):
+        """
+        Retrieves the hardware revision of the device
+
+        Returns:
+            string: Revision value of device
+        """
+        return self.eeprom.get_revision()
+
     def get_status(self):
         """
         Retrieves the operational status of the PSU
@@ -247,6 +256,21 @@ class Psu(PsuBase):
             psu_power = 0.0
 
         return psu_power
+
+    def get_maximum_supplied_power(self):
+        """
+        Retrieves the maximum supplied power by PSU
+
+        Returns:
+            A float number, the maximum power output in Watts.
+            e.g. 1200.1
+        """
+        if self.get_presence():
+            psu_maxpower = 460.0
+        else:
+            psu_maxpower = 0.0
+
+        return psu_maxpower
 
     def get_powergood_status(self):
         """

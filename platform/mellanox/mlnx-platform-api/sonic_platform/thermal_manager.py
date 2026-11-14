@@ -1,5 +1,6 @@
 #
-# Copyright (c) 2020-2021 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
+# Copyright (c) 2020-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,15 +15,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-import os
 from sonic_platform_base.sonic_thermal_control.thermal_manager_base import ThermalManagerBase
-from sonic_platform_base.sonic_thermal_control.thermal_policy import ThermalPolicy
-from .thermal_actions import *
-from .thermal_conditions import *
-from .thermal_infos import *
+from . import thermal_updater
+from . import smartswitch_thermal_updater
+from .device_data import DeviceDataManager
+from .liquid_cooling import LiquidCooling
+from sonic_py_common import logger
+
+SYSLOG_IDENTIFIER = 'thermal_manager'
+log = logger.Logger(SYSLOG_IDENTIFIER)
 
 
 class ThermalManager(ThermalManagerBase):
+    thermal_updater_task = None
+
+    @classmethod
+    def run_policy(cls, chassis):
+        pass
+
     @classmethod
     def initialize(cls):
         """
@@ -30,43 +40,29 @@ class ThermalManager(ThermalManagerBase):
         and any other vendor specific initialization.
         :return:
         """
-        cls._add_private_thermal_policy()
+        if LiquidCooling().get_num_leak_sensors() > 0:
+            log.log_notice('Liquid cooling platform detected, thermal updater is disabled')
+            cls.thermal_updater_task = None
+            return
+
+        dpus_present = DeviceDataManager.get_platform_dpus_data()
+        if not dpus_present:
+            # Non smart switch behaviour has highest priority
+            from .chassis import Chassis
+            cls.thermal_updater_task = thermal_updater.ThermalUpdater(sfp_list=Chassis.chassis_instance.get_all_sfps())
+        else:
+            from .chassis import Chassis
+            dpus = Chassis.chassis_instance.get_all_modules()
+            cls.thermal_updater_task = smartswitch_thermal_updater.SmartswitchThermalUpdater(sfp_list=Chassis.chassis_instance.get_all_sfps(),
+                                                                                             dpu_list=dpus)
+        cls.thermal_updater_task.start()
 
     @classmethod
-    def start_thermal_control_algorithm(cls):
+    def deinitialize(cls):
         """
-        Start thermal control algorithm
-
-        Returns:
-            bool: True if set success, False if fail. 
+        Destroy thermal manager, including any vendor specific cleanup. The default behavior of this function
+        is a no-op.
+        :return:
         """
-        from .thermal import Thermal
-        Thermal.set_thermal_algorithm_status(True)
-
-    @classmethod
-    def stop_thermal_control_algorithm(cls):
-        """
-        Stop thermal control algorithm
-
-        Returns:
-            bool: True if set success, False if fail. 
-        """
-        from .thermal import Thermal
-        Thermal.set_thermal_algorithm_status(False)
-
-    @classmethod
-    def _add_private_thermal_policy(cls):
-        dynamic_min_speed_policy = ThermalPolicy()
-        dynamic_min_speed_policy.conditions[MinCoolingLevelChangeCondition] = MinCoolingLevelChangeCondition()
-        dynamic_min_speed_policy.actions[ChangeMinCoolingLevelAction] = ChangeMinCoolingLevelAction()
-        cls._policy_dict['DynamicMinCoolingLevelPolicy'] = dynamic_min_speed_policy
-
-        update_psu_fan_speed_policy = ThermalPolicy()
-        update_psu_fan_speed_policy.conditions[CoolingLevelChangeCondition] = CoolingLevelChangeCondition()
-        update_psu_fan_speed_policy.actions[UpdatePsuFanSpeedAction] = UpdatePsuFanSpeedAction()
-        cls._policy_dict['UpdatePsuFanSpeedPolicy'] = update_psu_fan_speed_policy
-
-        update_cooling_level_policy = ThermalPolicy()
-        update_cooling_level_policy.conditions[UpdateCoolingLevelToMinCondition] = UpdateCoolingLevelToMinCondition()
-        update_cooling_level_policy.actions[UpdateCoolingLevelToMinAction] = UpdateCoolingLevelToMinAction()
-        cls._policy_dict['UpdateCoolingLevelPolicy'] = update_cooling_level_policy
+        if cls.thermal_updater_task:
+            cls.thermal_updater_task.stop()

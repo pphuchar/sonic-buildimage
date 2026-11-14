@@ -11,6 +11,7 @@
 try:
     import os.path
     from sonic_eeprom import eeprom_tlvinfo
+    import binascii
 except ImportError as e:
     raise ImportError(str(e) + "- required module not found")
 
@@ -20,7 +21,7 @@ class Eeprom(eeprom_tlvinfo.TlvInfoDecoder):
     def __init__(self):
         self.eeprom_path = None
         for b in (0, 1):
-            f = '/sys/class/i2c-adapter/i2c-{0}/{0}-0050/eeprom'.format(b)
+            f = '/sys/bus/i2c/devices/i2c-{0}/{0}-0050/eeprom'.format(b)
             if os.path.exists(f):
                 self.eeprom_path = f
                 break
@@ -48,7 +49,7 @@ class Eeprom(eeprom_tlvinfo.TlvInfoDecoder):
                 break
 
             tlv = eeprom[tlv_index:tlv_index + 2
-                         + eeprom[tlv_index + 1]]
+                    + eeprom[tlv_index + 1]]
             code = "0x%02X" % tlv[0]
 
             name, value = self.decoder(None, tlv)
@@ -69,14 +70,14 @@ class Eeprom(eeprom_tlvinfo.TlvInfoDecoder):
             return "N/A"
         return results[2].decode('ascii')
 
-    def base_mac_addr(self, e):
+    def base_mac_addr(self, e=None):
         """
         Returns the base mac address found in the system EEPROM
         """
         (is_valid, t) = self.get_tlv_field(
                           self.eeprom_data, self._TLV_CODE_MAC_BASE)
         if not is_valid or t[1] != 6:
-            return super(eeprom_tlvinfo.TlvInfoDecoder, self).switchaddrstr(t)
+            return super(TlvInfoDecoder, self).switchaddrstr(e)
 
         return ":".join(["{:02x}".format(T) for T in t[2]]).upper()
 
@@ -122,7 +123,7 @@ class Eeprom(eeprom_tlvinfo.TlvInfoDecoder):
         if not is_valid:
             return "N/A"
 
-        return results[2].decode('ascii')
+        return (binascii.b2a_hex(results[2])).decode('ascii')
 
     def system_eeprom_info(self):
         """

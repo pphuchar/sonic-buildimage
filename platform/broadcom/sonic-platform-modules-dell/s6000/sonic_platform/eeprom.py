@@ -17,6 +17,7 @@
 
 
 try:
+    import os
     import binascii
     import redis
     import struct
@@ -49,7 +50,7 @@ fantray_eeprom_format = [
 class Eeprom(TlvInfoDecoder):
     """DellEMC Platform-specific EEPROM class"""
 
-    I2C_DIR = "/sys/class/i2c-adapter/"
+    I2C_DIR = "/sys/bus/i2c/devices/"
 
     def __init__(self, is_psu=False, psu_index=0, is_fantray=False, fantray_index=0):
         self.is_psu_eeprom = is_psu
@@ -105,6 +106,7 @@ class Eeprom(TlvInfoDecoder):
                 self.part_number = 'NA'
                 self.model_str = 'NA'
                 self.serial = 'NA'
+                self.revision = 'NA'
                 return
 
             total_length = (eeprom[9] << 8) | (eeprom[10])
@@ -142,6 +144,8 @@ class Eeprom(TlvInfoDecoder):
                                 "0x%X" % (self._TLV_CODE_PRODUCT_NAME), 'NA')
             self.serial = self.eeprom_tlv_dict.get(
                                 "0x%X" % (self._TLV_CODE_SERVICE_TAG), 'NA')
+            self.revision = self.eeprom_tlv_dict.get(
+                                "0x%X" % (self._TLV_CODE_LABEL_REVISION), 'NA')
 
     def _load_device_eeprom(self):
         """
@@ -154,6 +158,7 @@ class Eeprom(TlvInfoDecoder):
         except:
             self.serial_number = 'NA'
             self.part_number = 'NA'
+            self.revision = 'NA'
             if self.is_psu_eeprom:
                 self.psu_type = 'NA'
             else:
@@ -167,9 +172,13 @@ class Eeprom(TlvInfoDecoder):
                                       + "-" + ppid[16:])
                 (valid, data) = self._get_eeprom_field("DPN Rev")
                 if valid:
+                    self.revision = data
                     self.serial_number += "-" + data
+                else:
+                    self.revision = 'NA'
             else:
                 self.serial_number = 'NA'
+                self.revision = 'NA'
 
             (valid, data) = self._get_eeprom_field("Part Number")
             if valid:
@@ -218,6 +227,12 @@ class Eeprom(TlvInfoDecoder):
         Returns the part number.
         """
         return self.part_number
+
+    def get_revision(self):
+        """
+        Returns the hardware revision.
+        """
+        return self.revision
 
     def airflow_fan_type(self):
         """
@@ -290,7 +305,7 @@ class EepromS6000(EepromDecoder):
         super(EepromS6000, self).__init__(self.eeprom_path, None, 0, '', True)
 
         if not is_plugin:
-            self.eeprom_data = self.read_eeprom()
+            self.eeprom_data = "N/A"  if os.geteuid() != 0 else self.read_eeprom()
 
     def _is_valid_block_checksum(self, e):
         crc = self.compute_dell_crc(e[:-2])
@@ -414,7 +429,7 @@ class EepromS6000(EepromDecoder):
                     data = ":".join(["{:02x}".format(T) for T in e[offset:offset+f[1]]]).upper()
                 else:
                     data = e[offset:offset+f[1]].decode('ascii')
-                client.hset('EEPROM_INFO|{}'.format(f[0]), 'Value', data)
+                client.hset('EEPROM_INFO|{}'.format(f[0]), 'Value', data.strip('\x00'))
                 offset += f[1]
 
             if not self._is_valid_block_checksum(e[blk_start:blk_end]):
@@ -449,7 +464,7 @@ class EepromS6000(EepromDecoder):
         (valid, data) = self._get_eeprom_field(self.eeprom_data,
                                                self._BLK_CODE_MFG, "Part Number")
         if valid:
-            return data
+            return data.rstrip('\x00')
         else:
             return 'NA'
 
@@ -470,6 +485,17 @@ class EepromS6000(EepromDecoder):
         """
         (valid, data) = self._get_eeprom_field(self.eeprom_data,
                                                self._BLK_CODE_MFG, "PPID")
+        if valid:
+            return data
+        else:
+            return 'NA'
+
+    def get_revision(self):
+        """
+        Returns the hardware revision.
+        """
+        (valid, data) = self._get_eeprom_field(self.eeprom_data,
+                                               self._BLK_CODE_MFG, "DPN Rev")
         if valid:
             return data
         else:

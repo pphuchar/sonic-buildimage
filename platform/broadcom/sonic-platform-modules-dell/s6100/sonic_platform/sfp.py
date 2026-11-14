@@ -9,10 +9,15 @@
 #############################################################################
 
 try:
+    import os
+    import syslog
     import time
     from sonic_platform_base.sonic_xcvr.sfp_optoe_base import SfpOptoeBase
 except ImportError as e:
     raise ImportError(str(e) + "- required module not found")
+
+QSFP_INFO_OFFSET = 128
+
 
 class Sfp(SfpOptoeBase):
     """
@@ -38,6 +43,9 @@ class Sfp(SfpOptoeBase):
         """
         Retrieves the presence of the sfp
         """
+        if self.index > 64:
+            return False
+
         presence_ctrl = self.sfp_control + 'qsfp_modprs'
         try:
             reg_file = open(presence_ctrl)
@@ -65,6 +73,9 @@ class Sfp(SfpOptoeBase):
         """
         Retrieves the reset status of SFP
         """
+        if self.index > 64:
+            return False
+
         reset_status = None
         reset_ctrl = self.sfp_control + 'qsfp_reset'
         try:
@@ -96,6 +107,9 @@ class Sfp(SfpOptoeBase):
         """
         Retrieves the lpmode (low power mode) status of this SFP
         """
+        if self.index > 64:
+            return False
+
         lpmode_ctrl = self.sfp_control + 'qsfp_lpmode'
         try:
             reg_file = open(lpmode_ctrl, "r+")
@@ -129,6 +143,9 @@ class Sfp(SfpOptoeBase):
         """
         Reset SFP and return all user module settings to their default srate.
         """
+        if self.index > 64:
+            return False
+
         reset_ctrl = self.sfp_control + 'qsfp_reset'
         try:
             # Open reset_ctrl in both read & write mode
@@ -174,6 +191,9 @@ class Sfp(SfpOptoeBase):
         """
         Sets the lpmode (low power mode) of SFP
         """
+        if self.index > 64:
+            return False
+
         lpmode_ctrl = self.sfp_control + 'qsfp_lpmode'
         try:
             reg_file = open(lpmode_ctrl, "r+")
@@ -238,3 +258,27 @@ class Sfp(SfpOptoeBase):
             bool: True if it is replaceable.
         """
         return True
+
+    def get_error_description(self):
+        """
+        Retrives the error descriptions of the SFP module
+
+        Returns:
+            String that represents the current error descriptions of vendor specific errors
+            In case there are multiple errors, they should be joined by '|',
+            like: "Bad EEPROM|Unsupported cable"
+        """
+        if not self.get_presence():
+            return self.SFP_STATUS_UNPLUGGED
+        else:
+            if not os.path.isfile(self.eeprom_path):
+                return "EEPROM driver is not attached"
+
+            try:
+                with open(self.eeprom_path, mode="rb", buffering=0) as eeprom:
+                    eeprom.seek(QSFP_INFO_OFFSET)
+                    eeprom.read(1)
+            except OSError as e:
+                return "EEPROM read failed ({})".format(e.strerror)
+
+        return self.SFP_STATUS_OK

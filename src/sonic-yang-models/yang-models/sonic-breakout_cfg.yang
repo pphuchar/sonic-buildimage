@@ -2,12 +2,8 @@ module sonic-breakout_cfg {
 
     yang-version 1.1;
 
-    namespace "http://github.com/Azure/sonic-breakout_cfg";
+    namespace "http://github.com/sonic-net/sonic-breakout_cfg";
     prefix breakout_cfg;
-
-    import sonic-extension {
-        prefix ext;
-    }
 
     description "BREAKOUT_CFG YANG Module for SONiC OS";
 
@@ -19,12 +15,11 @@ module sonic-breakout_cfg {
 
         container BREAKOUT_CFG {
 
-            description "BREAKOUT_CFG part of config_db.json";
+            description "Port breakout mode configuration for dynamic port splitting";
 
             list BREAKOUT_CFG_LIST {
 
                 key "port";
-
 
                 /*
                  * This is leaf instead of a leafref towards port, because this
@@ -34,6 +29,7 @@ module sonic-breakout_cfg {
                  * PORT table.
                  */
                 leaf port {
+                    description "Parent port name for breakout configuration";
                     type string {
                         length 1..255;
                     }

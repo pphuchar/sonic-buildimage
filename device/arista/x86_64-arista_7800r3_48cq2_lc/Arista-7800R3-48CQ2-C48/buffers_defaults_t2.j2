@@ -1,5 +1,13 @@
+{%- set default_cable = '300m' %}
 
-{%- set default_cable = '5m' %}
+{%- set ports2cable = {
+        'torrouter_server'       : '300m',
+        'leafrouter_torrouter'   : '300m',
+        'spinerouter_leafrouter' : '2000m',
+        'regionalhub_spinerouter': '120000m',
+        'aznghub_spinerouter'    : '120000m'
+        }
+-%}
 
 {%- macro generate_port_lists(PORT_ALL) %}
     {# Generate list of ports #}
@@ -11,56 +19,28 @@
 {%- macro generate_buffer_pool_and_profiles() %}
     "BUFFER_POOL": {
         "ingress_lossless_pool": {
-            "size": "3220805000",
+            "size": "6441610000",
             "type": "both",
             "mode": "dynamic",
-            "xoff": "2102272"
+            "xoff": "1056256819"
         }
     },
     "BUFFER_PROFILE": {
-        "ingress_lossless_profile": {
-            "pool":"[BUFFER_POOL|ingress_lossless_pool]",
-            "size":"1280",
-            "dynamic_th":"-2",
-            "xon_offset":"2560",
-            "xon":"0",
-            "xoff":"66048"
-        },
         "ingress_lossy_profile": {
-            "pool":"[BUFFER_POOL|ingress_lossless_pool]",
+            "pool":"ingress_lossless_pool",
             "size":"0",
-            "xon_offset":"0",
-            "static_th":"30535680"
+	    "xon_offset": "0",
+            "dynamic_th":"0"
         },
         "egress_lossless_profile": {
-            "pool":"[BUFFER_POOL|ingress_lossless_pool]",
-            "size":"0",
-            "static_th":"33030144"
-        },
-        "egress_lossy_profile": {
-            "pool":"[BUFFER_POOL|ingress_lossless_pool]",
+            "pool":"ingress_lossless_pool",
             "size":"0",
             "dynamic_th":"-1"
+        },
+        "egress_lossy_profile": {
+            "pool":"ingress_lossless_pool",
+            "size":"0",
+            "dynamic_th":"-4"
         }
     },
-{%- endmacro %}
-
-{%- macro generate_queue_buffers(port_names) %}
-    "BUFFER_QUEUE": {
-{% for port in port_names.split(',') %}
-        "{{ port }}|3-4": {
-            "profile" : "[BUFFER_PROFILE|ingress_lossless_profile]"
-        },
-{% endfor %}
-{% for port in port_names.split(',') %}
-        "{{ port }}|0-2": {
-            "profile" : "[BUFFER_PROFILE|egress_lossy_profile]"
-        },
-{% endfor %}
-{% for port in port_names.split(',') %}
-        "{{ port }}|5-6": {
-            "profile" : "[BUFFER_PROFILE|egress_lossy_profile]"
-        }{% if not loop.last %},{% endif %}
-{% endfor %}   
-    }
 {%- endmacro %}

@@ -28,7 +28,7 @@ CACHE_FILE = 'syseeprom_cache'
 class Tlv(eeprom_tlvinfo.TlvInfoDecoder):
 
     EEPROM_DECODE_HEADLINES = 6
-    DEFAULT_EEPROM_PATH = "/sys/class/i2c-adapter/i2c-12/12-0050/eeprom"
+    DEFAULT_EEPROM_PATH = "/sys/bus/i2c/devices/i2c-12/12-0050/eeprom"
 
     def __init__(self, conf=None):
         eeprom_path = conf.get('eeprom', self.DEFAULT_EEPROM_PATH)
@@ -45,7 +45,7 @@ class Tlv(eeprom_tlvinfo.TlvInfoDecoder):
         for line in lines:
             try:
                 match = re.search(
-                    '(0x[0-9a-fA-F]{2})([\s]+[\S]+[\s]+)([\S]+)', line)
+                    '(0x[0-9a-fA-F]{2})([\s]+[\S]+[\s]+)(.*$)', line)
                 if match is not None:
                     idx = match.group(1)
                     value = match.group(3).rstrip('\0')

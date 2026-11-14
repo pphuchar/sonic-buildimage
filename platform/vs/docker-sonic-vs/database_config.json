@@ -28,11 +28,6 @@
             "separator": ":",
             "instance" : "redis"
         },
-        "LOGLEVEL_DB" : {
-            "id" : 3,
-            "separator": ":",
-            "instance" : "redis"
-        },
         "CONFIG_DB" : {
             "id" : 4,
             "separator": "|",
@@ -80,6 +75,26 @@
         },
         "APPL_STATE_DB" : {
             "id" : 14,
+            "separator": ":",
+            "instance" : "redis"
+        },
+        "DPU_APPL_DB" : {
+            "id" : 15,
+            "separator": ":",
+            "instance" : "redis"
+        },
+        "DPU_APPL_STATE_DB" : {
+            "id" : 16,
+            "separator": "|",
+            "instance" : "redis"
+        },
+        "DPU_STATE_DB" : {
+            "id": 17,
+            "separator": "|",
+            "instance" : "redis"
+        },
+        "DPU_COUNTERS_DB" : {
+            "id": 18,
             "separator": ":",
             "instance" : "redis"
         }

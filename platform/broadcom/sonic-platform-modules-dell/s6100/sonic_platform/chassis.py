@@ -10,16 +10,17 @@
 
 try:
     import os
+    import re
+    import time
     from sonic_platform_base.chassis_base import ChassisBase
-    from sonic_platform.sfp import Sfp
-    from sonic_platform.psu import Psu
+    from sonic_platform.component import Component
+    from sonic_platform.eeprom import Eeprom
     from sonic_platform.fan_drawer import FanDrawer
     from sonic_platform.module import Module
+    from sonic_platform.psu import Psu
     from sonic_platform.thermal import Thermal
-    from sonic_platform.component import Component
     from sonic_platform.watchdog import Watchdog, WatchdogTCO
-    from sonic_platform.eeprom import Eeprom
-    import time
+    from sonic_platform.sfp import Sfp
 except ImportError as e:
     raise ImportError(str(e) + "- required module not found")
 
@@ -27,7 +28,7 @@ MAX_S6100_MODULE = 4
 MAX_S6100_FANTRAY = 4
 MAX_S6100_PSU = 2
 MAX_S6100_THERMAL = 10
-MAX_S6100_COMPONENT = 4
+MAX_S6100_COMPONENT = 5
 
 
 class Chassis(ChassisBase):
@@ -64,6 +65,8 @@ class Chassis(ChassisBase):
         'amber': 0x02, 'blinking amber': 0x08
     }
 
+    _global_port_pres_dict = {}
+
     def __init__(self):
 
         ChassisBase.__init__(self)
@@ -75,6 +78,15 @@ class Chassis(ChassisBase):
             module = Module(i)
             self._module_list.append(module)
             self._sfp_list.extend(module._sfp_list)
+
+        #SFP ports
+        sfp_port = 11
+        for index in range(64,66):
+             eeprom_path = "/sys/bus/i2c/devices/i2c-{0}/{0}-0050/eeprom".format(sfp_port)
+             sfp_control = ""
+             sfp_node = Sfp(index, 'SFP', eeprom_path, sfp_control, index)
+             self._sfp_list.append(sfp_node)
+             sfp_port = sfp_port + 1
 
         for i in range(MAX_S6100_FANTRAY):
             fandrawer = FanDrawer(i)
@@ -92,6 +104,13 @@ class Chassis(ChassisBase):
         for i in range(MAX_S6100_COMPONENT):
             component = Component(i)
             self._component_list.append(component)
+
+        for i in self._sfp_list:
+            presence = i.get_presence()
+            if presence:
+                self._global_port_pres_dict[i.index] = '1'
+            else:
+                self._global_port_pres_dict[i.index] = '0'
 
         bios_ver = self.get_component(0).get_firmware_version()
         bios_minor_ver = bios_ver.split("-")[-1]
@@ -197,7 +216,7 @@ class Chassis(ChassisBase):
         Returns:
             string: Serial number of chassis
         """
-        return self._eeprom.serial_str()
+        return self._eeprom.serial_number_str()
 
     def get_status(self):
         """
@@ -235,6 +254,15 @@ class Chassis(ChassisBase):
         """
         return self._eeprom.base_mac_addr()
 
+    def get_revision(self):
+        """
+        Retrieves the hardware revision of the device
+
+        Returns:
+            string: Revision value of device
+        """
+        return self._eeprom.revision_str()
+
     def get_system_eeprom_info(self):
         """
         Retrieves the full content of system EEPROM information for the chassis
@@ -244,6 +272,19 @@ class Chassis(ChassisBase):
             values.
         """
         return self._eeprom.system_eeprom_info()
+
+    def get_module_index(self, module_name):
+        """
+        Retrieves module index from the module name
+
+        Args:
+            module_name: A string, prefixed by SUPERVISOR, LINE-CARD or FABRIC-CARD
+            Ex. SUPERVISOR0, LINE-CARD1, FABRIC-CARD5
+        Returns:
+            An integer, the index of the ModuleBase object in the module_list
+        """
+        module_index = re.match(r'IOM([1-4])', module_name).group(1)
+        return int(module_index) - 1
 
     def get_reboot_cause(self):
         """
@@ -284,13 +325,13 @@ class Chassis(ChassisBase):
     def _get_transceiver_presence(self):
 
         cpld2_modprs = self._get_register(
-                    "/sys/class/i2c-adapter/i2c-14/14-003e/qsfp_modprs")
+                    "/sys/bus/i2c/devices/i2c-14/14-003e/qsfp_modprs")
         cpld3_modprs = self._get_register(
-                    "/sys/class/i2c-adapter/i2c-15/15-003e/qsfp_modprs")
+                    "/sys/bus/i2c/devices/i2c-15/15-003e/qsfp_modprs")
         cpld4_modprs = self._get_register(
-                    "/sys/class/i2c-adapter/i2c-16/16-003e/qsfp_modprs")
+                    "/sys/bus/i2c/devices/i2c-16/16-003e/qsfp_modprs")
         cpld5_modprs = self._get_register(
-                    "/sys/class/i2c-adapter/i2c-17/17-003e/qsfp_modprs")
+                    "/sys/bus/i2c/devices/i2c-17/17-003e/qsfp_modprs")
 
         # If IOM is not present, register read will fail.
         # Handle the scenario gracefully

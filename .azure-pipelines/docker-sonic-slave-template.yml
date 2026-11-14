@@ -3,7 +3,6 @@
 # Add steps that build, run tests, deploy, and more:
 # https://aka.ms/yaml
 # Build and push sonic-slave-[buster|jessie|stretch] images for amd64/armhf/arm64
-
 parameters:
 - name: arch
   type: string
@@ -14,6 +13,8 @@ parameters:
 - name: dist
   type: string
   values:
+  - trixie
+  - bookworm
   - bullseye
   - buster
   - stretch
@@ -26,83 +27,116 @@ parameters:
   default: sonicdev
 - name: pool
   type: string
-  default: sonicbld
+  default: sonicso1ES-amd64
   values:
-  - sonicbld
-  - sonicbld-arm64
-  - sonicbld-armhf
+  - sonicso1ES-amd64
+  - sonicso1ES-arm64
+  - sonicso1ES-armhf
 
 jobs:
-- job: Build_${{ parameters.dist }}_${{ parameters.arch }}
+- job: sonic_slave_${{ parameters.dist }}_${{ parameters.arch }}
   timeoutInMinutes: 360
+  variables:
+  - template: template-variables.yml
+  - template: azure-pipelines-repd-build-variables.yml
   pool: ${{ parameters.pool }}
   steps:
   - template: cleanup.yml
+  - template: template-clean-sonic-slave.yml
   - checkout: self
     clean: true
-    submodules: recursive
+  - task: Docker@2
+    displayName: Login to ACR
+    inputs:
+      command: login
+      containerRegistry: ${{ parameters.registry_conn }}
   - bash: |
       set -ex
+      build_options="$(VERSION_CONTROL_OPTIONS)"
+      tags=$(BLDENV=${{ parameters.dist }} make -f Makefile.work showtag $build_options PLATFORM=generic PLATFORM_ARCH=${{ parameters.arch }} | grep sonic-slave | tail -n 2)
+      image_tag=$(printf '%s\n' "$tags" | tail -n 1)
+      image_latest=$(echo $(echo $image_tag | awk -F: '{print$1}'):latest)
+      image_branch=$(echo $(echo $image_tag | awk -F: '{print$1}'):$(Build.SourceBranchName))
+      image_branch_arch=$(echo $(echo $image_tag | awk -F: '{print$1}'):$(Build.SourceBranchName)-${{ parameters.arch }})
+      docker rmi $image_tag || true
 
-      SLAVE_DIR=sonic-slave-${{ parameters.dist }}
-      if [ x${{ parameters.pool }} == x"sonicbld" ]; then
-        if [ x${{ parameters.arch }} == x"amd64" ]; then
-          SLAVE_BASE_IMAGE=${SLAVE_DIR}
-          SLAVE_BASE_IMAGE_UPLOAD=${SLAVE_DIR}
-        elif [ x${{ parameters.pool }} == x"sonicbld" ]; then
-          SLAVE_BASE_IMAGE=${SLAVE_DIR}-march-${{ parameters.arch }}
-          SLAVE_BASE_IMAGE_UPLOAD=${SLAVE_DIR}-march-${{ parameters.arch }}
+      if [[ "$(Build.Reason)" =~ [a-zA-Z]*CI ]] && docker pull ${{ parameters.registry_url }}/${image_tag};then
+        exit 0
+      fi
+
+      BLDENV=${{ parameters.dist }} make -f Makefile.work configure $build_options PLATFORM=generic PLATFORM_ARCH=${{ parameters.arch }} || docker image ls $image_tag
+      if [[ "$(Build.Reason)" == "PullRequest" ]];then
+        exit 0
+      fi
+
+      docker tag ${image_tag} ${REGISTRY_SERVER}/${image_tag}
+      docker push ${REGISTRY_SERVER}/${image_tag}
+      docker tag ${image_tag} ${REGISTRY_SERVER}/${image_branch_arch}
+      docker push ${REGISTRY_SERVER}/${image_branch_arch}
+      if [[ "${{ parameters.arch }}" == "amd64" ]];then
+        docker tag ${image_tag} ${REGISTRY_SERVER}/${image_branch}
+        docker push ${REGISTRY_SERVER}/${image_branch}
+        if [[ "$(Build.SourceBranchName)" == "master" ]];then
+          docker tag ${image_tag} ${REGISTRY_SERVER}/${image_latest}
+          docker push ${REGISTRY_SERVER}/${image_latest}
         fi
-      elif [[ x${{ parameters.pool }} == x"sonicbld-armhf" && x${{ parameters.arch }} == x"armhf" ]]; then
-        SLAVE_BASE_IMAGE=${SLAVE_DIR}
-        SLAVE_BASE_IMAGE_UPLOAD=${SLAVE_DIR}-armhf
-      elif [[ x${{ parameters.pool }} == x"sonicbld-arm64" && x${{ parameters.arch }} == x"arm64" ]]; then
-        SLAVE_BASE_IMAGE=${SLAVE_DIR}
-        SLAVE_BASE_IMAGE_UPLOAD=${SLAVE_DIR}-arm64
-      else
-        echo "do not support build ${{ parameters.arch }} on ${{ parameters.pool }}"
-        exit 1
       fi
-
-      if [ x"$(Build.SourceBranchName)" == x"202012" ]; then
-        BUILD_OPTIONS = 'SONIC_VERSION_CONTROL_COMPONENTS=deb,py2,py3,web,git,docker'
-      fi
-
-      containers=$(docker container ls | grep "sonic-slave" | awk '{ print $1 }')
-      if [ ! -z "$containers" ]; then
-        docker container kill $containers || true
-        sleep 5
-      fi
-      images=$(docker images 'sonic-slave-*' -a -q)
-      if [ ! -z "$images" ]; then
-        docker rmi -f $images
-      fi
-
-      tmpfile=$(mktemp)
-
-      echo ${{ parameters.arch }} > .arch
-
-      DOCKER_DATA_ROOT_FOR_MULTIARCH=/data/march/docker BLDENV=${{ parameters.dist }} $(BUILD_OPTIONS) make -f Makefile.work sonic-slave-build | tee $tmpfile
-      SLAVE_BASE_TAG=$(grep "^Checking sonic-slave-base image:" $tmpfile | awk -F ':' '{print $3}')
-      SLAVE_TAG=$(grep "^Checking sonic-slave image:" $tmpfile | awk -F ':' '{print $3}')
-
-      mkdir -p target
-
-      docker tag $SLAVE_BASE_IMAGE:$SLAVE_BASE_TAG $REGISTRY_SERVER/$SLAVE_BASE_IMAGE_UPLOAD:latest
-      docker tag $SLAVE_BASE_IMAGE:$SLAVE_BASE_TAG $REGISTRY_SERVER/$SLAVE_BASE_IMAGE_UPLOAD:$SLAVE_BASE_TAG
-      set +x
-      echo "##vso[task.setvariable variable=VARIABLE_SLAVE_BASE_IMAGE]$SLAVE_BASE_IMAGE_UPLOAD"
-      echo "##vso[task.setvariable variable=VARIABLE_SLAVE_BASE_TAG]$SLAVE_BASE_TAG"
     env:
       REGISTRY_SERVER: ${{ parameters.registry_url }}
     displayName: Build sonic-slave-${{ parameters.dist }}-${{ parameters.arch }}
+  - bash: |
+      set -ex
+      case "${{ parameters.arch }}" in
+        amd64) trivy_arch=64bit ;;
+        arm64) trivy_arch=ARM64 ;;
+        armhf) trivy_arch=ARM ;;
+      esac
+      TRIVY_VERSION="0.70.0"
+      trivy_package="trivy_${TRIVY_VERSION}_Linux-${trivy_arch}.deb"
+      curl -fLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${trivy_package}"
+      sudo apt install -y "./${trivy_package}"
+      trivy --version
+    displayName: "Install Trivy"
+    continueOnError: true
+  - bash: |
+      set -x
+      build_options="$(VERSION_CONTROL_OPTIONS)"
+      tags=$(BLDENV=${{ parameters.dist }} make -f Makefile.work showtag $build_options PLATFORM=generic PLATFORM_ARCH=${{ parameters.arch }} | grep sonic-slave | tail -n 2)
+      image_tag=$(printf '%s\n' "$tags" | tail -n 1)
+      registry_image_tag="${REGISTRY_SERVER}/${image_tag}"
 
-  - task: Docker@2
-    displayName: Upload image
-    inputs:
-      containerRegistry: ${{ parameters.registry_conn }}
-      repository: $(VARIABLE_SLAVE_BASE_IMAGE)
-      command: push
-      tags: |
-        $(VARIABLE_SLAVE_BASE_TAG)
-        latest
+      if docker image inspect "$image_tag" >/dev/null 2>&1; then
+        scan_image="$image_tag"
+      elif docker image inspect "$registry_image_tag" >/dev/null 2>&1; then
+        scan_image="$registry_image_tag"
+      else
+        echo "##vso[task.logissue type=error]Sonic slave image not found: $image_tag or $registry_image_tag"
+        exit 1
+      fi
+
+      report="$(Build.ArtifactStagingDirectory)/trivy-sonic-slave-${{ parameters.dist }}-${{ parameters.arch }}.txt"
+      trivy image \
+        --scanners vuln \
+        --severity MEDIUM,HIGH,CRITICAL \
+        --ignore-unfixed \
+        --exit-code 1 \
+        --format table \
+        --no-progress \
+        --timeout 30m \
+        --output "$report" \
+        "$scan_image"
+      trivy_exit=$?
+
+      echo ""
+      echo "=== Trivy scan results ($image_tag) ==="
+      cat "$report"
+      exit $trivy_exit
+    env:
+      REGISTRY_SERVER: ${{ parameters.registry_url }}
+    displayName: "Trivy vulnerability scan"
+    continueOnError: true
+  - publish: $(Build.ArtifactStagingDirectory)/trivy-sonic-slave-${{ parameters.dist }}-${{ parameters.arch }}.txt
+    artifact: trivy-scan-results-${{ parameters.dist }}-${{ parameters.arch }}
+    displayName: "Publish Trivy scan results"
+    condition: always()
+    continueOnError: true

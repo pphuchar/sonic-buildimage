@@ -1,85 +1,155 @@
 #!/bin/bash
+resolvconf_updates=true
 
-ifdown --force eth0
+function wait_networking_service_done() {
+    local -i _WDOG_CNT="1"
+    local -ir _WDOG_MAX="30"
+
+    local -r _TIMEOUT="1s"
+
+    while [[ "${_WDOG_CNT}" -le "${_WDOG_MAX}" ]]; do
+        networking_status="$(systemctl is-active networking 2>&1)"
+
+        if [[ "${networking_status}" == active || "${networking_status}" == inactive || "${networking_status}" == failed ]] ; then
+            return
+        fi
+
+        echo "interfaces-config: networking service is running, wait for it done"
+
+        let "_WDOG_CNT++"
+        sleep "${_TIMEOUT}"
+    done
+
+    echo "interfaces-config: networking service is still running after 30 seconds, killing it"
+    systemctl kill networking 2>&1
+}
+
+function resolvconf_updates_disable() {
+    resolvconf --updates-are-enabled
+    if [[ $? -ne 0 ]]; then
+        resolvconf_updates=false
+    fi
+    resolvconf --disable-updates
+}
+
+function resolvconf_updates_restore() {
+    if [[ $resolvconf_updates == true ]]; then
+        resolvconf --enable-updates
+    fi
+}
+
+# Use a private, uniquely-named temp directory instead of fixed /tmp paths:
+# /tmp is world-writable, so a fixed path could be pre-created as a symlink by
+# a local attacker before this script (which runs as root) writes to it.
+# Created before any disruptive side effects below (disabling DNS updates,
+# bringing down eth0) so a mktemp failure exits cleanly without leaving the
+# system in a half-reconfigured state.
+# Scope the restrictive umask to just this directory's creation so it does not
+# affect permissions of files created later in the script (e.g. by sonic-cfggen).
+_OLD_UMASK="$(umask)"
+umask 077
+TMP_DIR=$(mktemp -d /tmp/interfaces-config.XXXXXX) || {
+    echo "interfaces-config: failed to create temporary directory" >&2
+    exit 1
+}
+umask "${_OLD_UMASK}"
+
+ZTP_PORT_DATA="${TMP_DIR}/ztp_port_data.json"
+ZTP_INPUT="${TMP_DIR}/ztp_input.json"
+
+cleanup() {
+    rm -f -- "${ZTP_PORT_DATA}" "${ZTP_INPUT}"
+    rmdir -- "${TMP_DIR}" 2>/dev/null || true
+}
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Do not run DNS configuration update during the shutdowning of the management interface. 
+# This operation is redundant as there will be an update after the start of the interface.
+resolvconf_updates_disable
+
+if [[ $(ifquery --running eth0) ]]; then
+    wait_networking_service_done
+    ifdown --force eth0
+fi
 
 # Check if ZTP DHCP policy has been installed
-if [ -e /etc/network/ifupdown2/policy.d/ztp_dhcp.json ]; then
+if [[ -e /etc/network/ifupdown2/policy.d/ztp_dhcp.json ]]; then
     # Obtain port operational state information
-    redis-dump -d 0 -k "PORT_TABLE:Ethernet*"  -y > /tmp/ztp_port_data.json
-
-    if [ $? -ne 0 ] || [ ! -e /tmp/ztp_port_data.json ] || [ "$(cat /tmp/ztp_port_data.json)" = "" ]; then
-        echo "{}" > /tmp/ztp_port_data.json
+    if ! redis-dump -d 0 -k "PORT_TABLE:Ethernet*" -y > "${ZTP_PORT_DATA}" ||
+       [[ ! -s "${ZTP_PORT_DATA}" ]]; then
+        printf '{}\n' > "${ZTP_PORT_DATA}"
     fi
 
     # Create an input file with ztp input information
-    echo "{ \"PORT_DATA\" : $(cat /tmp/ztp_port_data.json) }" > \
-          /tmp/ztp_input.json
+    printf '{ "PORT_DATA" : %s }\n' "$(cat -- "${ZTP_PORT_DATA}")" > "${ZTP_INPUT}"
 else
-    echo "{ \"ZTP_DHCP_DISABLED\" : \"true\" }" > /tmp/ztp_input.json
+    printf '{ "ZTP_DHCP_DISABLED" : "true" }\n' > "${ZTP_INPUT}"
 fi
 
 # Create /e/n/i file for existing and active interfaces, dhcp6 sytcl.conf and dhclient.conf
-CFGGEN_PARAMS=" \
-    -d -j /tmp/ztp_input.json \
-    -t /usr/share/sonic/templates/interfaces.j2,/etc/network/interfaces \
-    -t /usr/share/sonic/templates/90-dhcp6-systcl.conf.j2,/etc/sysctl.d/90-dhcp6-systcl.conf \
-    -t /usr/share/sonic/templates/dhclient.conf.j2,/etc/dhcp/dhclient.conf \
-"
-sonic-cfggen $CFGGEN_PARAMS
+CFGGEN_PARAMS=(
+    -d
+    -j "${ZTP_INPUT}"
+    -t /usr/share/sonic/templates/interfaces.j2,/etc/network/interfaces
+    -t /usr/share/sonic/templates/90-dhcp6-systcl.conf.j2,/etc/sysctl.d/90-dhcp6-systcl.conf
+    -t /usr/share/sonic/templates/dhclient.conf.j2,/etc/dhcp/dhclient.conf
+)
 
-[ -f /var/run/dhclient.eth0.pid ] && kill `cat /var/run/dhclient.eth0.pid` && rm -f /var/run/dhclient.eth0.pid
-[ -f /var/run/dhclient6.eth0.pid ] && kill `cat /var/run/dhclient6.eth0.pid` && rm -f /var/run/dhclient6.eth0.pid
+# On BMC/Switch-Host platforms, pass bmc.json and the role to sonic-cfggen
+# so interfaces.j2 can render the BMC interface stanza with the correct IP.
+#   switch_bmc=1  -> use bmc_addr  (BMC's own IP on the link)
+#   switch_host=1 -> use bmc_if_addr (Switch-Host's IP on the BMC link)
+PLATFORM=$(sonic-cfggen -d -v DEVICE_METADATA.localhost.platform 2>/dev/null)
+PLATFORM_ENV_CONF="/usr/share/sonic/device/$PLATFORM/platform_env.conf"
+IS_SWITCH_BMC=0
+IS_SWITCH_HOST=0
+if [[ -f "$PLATFORM_ENV_CONF" ]]; then
+    grep -q '^switch_bmc=1'  "$PLATFORM_ENV_CONF" && IS_SWITCH_BMC=1
+    grep -q '^switch_host=1' "$PLATFORM_ENV_CONF" && IS_SWITCH_HOST=1
+fi
+if [[ $IS_SWITCH_BMC -eq 1 || $IS_SWITCH_HOST -eq 1 ]]; then
+    if [[ -f "/etc/sonic/bmc.json" ]]; then
+        sonic-cfggen "${CFGGEN_PARAMS[@]}" -j /etc/sonic/bmc.json \
+            -a "{\"IS_SWITCH_BMC\": $IS_SWITCH_BMC, \"IS_SWITCH_HOST\": $IS_SWITCH_HOST}"
+    else
+        sonic-cfggen "${CFGGEN_PARAMS[@]}"
+    fi
+else
+    sonic-cfggen "${CFGGEN_PARAMS[@]}"
+fi
+
+[[ -f /var/run/dhclient.eth0.pid ]] && kill `cat /var/run/dhclient.eth0.pid` && rm -f /var/run/dhclient.eth0.pid
+[[ -f /var/run/dhclient6.eth0.pid ]] && kill `cat /var/run/dhclient6.eth0.pid` && rm -f /var/run/dhclient6.eth0.pid
 
 for intf_pid in $(ls -1 /var/run/dhclient*.Ethernet*.pid 2> /dev/null); do
-    [ -f ${intf_pid} ] && kill `cat ${intf_pid}` && rm -f ${intf_pid}
+    [[ -f ${intf_pid} ]] && kill `cat ${intf_pid}` && rm -f ${intf_pid}
 done
 
-
-# Setup eth1 if we connect to a remote chassis DB.
-PLATFORM=${PLATFORM:-`sonic-cfggen -H -v DEVICE_METADATA.localhost.platform`}
-CHASSISDB_CONF="/usr/share/sonic/device/$PLATFORM/chassisdb.conf"
-[ -f $CHASSISDB_CONF ] && source $CHASSISDB_CONF
-
-ASIC_CONF="/usr/share/sonic/device/$PLATFORM/asic.conf"
-[ -f $ASIC_CONF ] && source $ASIC_CONF
-
-if [[ -n "$midplane_subnet" && ($NUM_ASIC -gt 1) ]]; then
-    for asic_id in `seq 0 $((NUM_ASIC - 1))`; do
-       NET_NS="asic$asic_id"
-
-       PIDS=`ip netns pids "$NET_NS" 2>/dev/null`
-       if [ "$?" -ne "0" ]; then # namespace doesn't exist
-          continue
-       fi
-
-       # Use /16 for loopback interface
-       ip netns exec $NET_NS ip addr add 127.0.0.1/16 dev lo
-       ip netns exec $NET_NS ip addr del 127.0.0.1/8 dev lo
-
-       # Create eth1 in database instance
-       ip link add name ns-eth1 link eth1-midplane type ipvlan mode l2
-       ip link set dev ns-eth1 netns $NET_NS
-       ip netns exec $NET_NS ip link set ns-eth1 name eth1
-
-       # Configure IP address and enable eth1
-       lc_slot_id=$(python3 -c 'import sonic_platform.platform; platform_chassis = sonic_platform.platform.Platform().get_chassis(); print(platform_chassis.get_my_slot())' 2>/dev/null)
-       lc_ip_address=`echo $midplane_subnet | awk -F. '{print $1 "." $2}'`.$lc_slot_id.$((asic_id + 10))
-       lc_subnet_mask=${midplane_subnet#*/}
-       ip netns exec $NET_NS ip addr add $lc_ip_address/$lc_subnet_mask dev eth1
-       ip netns exec $NET_NS ip link set dev eth1 up
-
-       # Allow localnet routing on the new interfaces if midplane is using a
-       # subnet in the 127/8 range.
-       if [[ "${midplane_subnet#127}" != "$midplane_subnet" ]]; then
-          ip netns exec $NET_NS bash -c "echo 1 > /proc/sys/net/ipv4/conf/eth1/route_localnet"
-       fi
-    done
-fi
+/usr/bin/resolv-config.sh cleanup
+# Restore DNS configuration update to the previous state.
+resolvconf_updates_restore
 
 # Read sysctl conf files again
 sysctl -p /etc/sysctl.d/90-dhcp6-systcl.conf
 
-systemctl restart networking
-
-# Clean-up created files
-rm -f /tmp/ztp_input.json /tmp/ztp_port_data.json
+MAX_RETRIES=5
+RETRY_DELAY=2
+for ((i=1; i<=MAX_RETRIES; i++)); do
+    LOG_MARK=$(date '+%Y-%m-%d %H:%M:%S')
+    if systemctl restart networking; then
+        if journalctl -u networking --since "$LOG_MARK" | grep -q "error.*already running"; then
+            echo "interfaces-config: error during networking restart in attempt $i. Retrying in ${RETRY_DELAY} seconds..."
+            sleep "${RETRY_DELAY}"
+        else
+            echo "interfaces-config: systemctl restart networking succeeded on attempt $i"
+            break
+        fi
+    else
+        echo "interfaces-config: Attempt $i to restart networking failed. Retrying in ${RETRY_DELAY} seconds..."
+        sleep "${RETRY_DELAY}"
+    fi
+done
